@@ -7,9 +7,16 @@ import Footer from "./Components/Footer/Footer";
 
 import Home from "./Components/Pages/Home";
 import Shop from "./Components/Pages/Shop";
+import Design from "./Components/Pages/Design";
+import Planner from "./Components/Pages/Planner";
+import About from "./Components/Pages/About";
+import Contact from "./Components/Pages/Contact";
+import Cart from "./Components/Pages/Cart";
 import Login from "./Components/Pages/Login";
 import Signup from "./Components/Pages/Signup";
 import AdminPage from "./Components/Pages/Adminpage";
+import AddPlant from "./Components/Pages/AddPlant";
+import ManagePlant from "./Components/Pages/ManagePlant";
 
 // 🔹 Protected route for admin
 const AdminRoute = ({ children }) => {
@@ -50,7 +57,12 @@ function App() {
           {/* Protected User Routes */}
           <Route path="/" element={<PrivateRoute><Home /></PrivateRoute>} />
           <Route path="/shop" element={<PrivateRoute><Shop /></PrivateRoute>} />
-         
+          <Route path="/design" element={<PrivateRoute><Design /></PrivateRoute>} />
+          <Route path="/planner" element={<PrivateRoute><Planner /></PrivateRoute>} />
+          <Route path="/about" element={<PrivateRoute><About /></PrivateRoute>} />
+          <Route path="/contact" element={<PrivateRoute><Contact /></PrivateRoute>} />
+          <Route path="/cart" element={<PrivateRoute><Cart /></PrivateRoute>} />
+
           {/* Admin Routes with nested paths */}
           <Route
             path="/admin"
@@ -60,6 +72,23 @@ function App() {
               </AdminRoute>
             }
           />
+          <Route
+            path="/admin/add"
+            element={
+              <AdminRoute>
+                <AddPlant />
+              </AdminRoute>
+            }
+          />
+          <Route
+            path="/admin/manage"
+            element={
+              <AdminRoute>
+                <ManagePlant />
+              </AdminRoute>
+            }
+          />
+
           {/* Fallback for unknown routes */}
           <Route path="*" element={<Navigate to="/" />} />
         </Routes>

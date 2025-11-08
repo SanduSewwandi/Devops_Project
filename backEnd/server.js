@@ -4,7 +4,7 @@ import connectDB from "./config/mongodb.js";
 import dotenv from "dotenv";
 import connectCloudinary from "./config/cloudinary.js";
 import userRouter from "./routes/userRoute.js";
-
+import plantRouter from "./routes/plantRoute.js";
 
 dotenv.config();
 
@@ -32,7 +32,7 @@ app.use((req, res, next) => {
 
 // API endpoints
 app.use("/api/user", userRouter);
-
+app.use("/api/plant", plantRouter);
 
 // Test route
 app.get("/", (req, res) => {
