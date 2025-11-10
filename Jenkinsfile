@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         DOCKERHUB_CREDS = 'plantcredential'
-        DOCKERHUB_USER  = 'sandunisewwandi'
+        DOCKERHUB_USER  = 'sandusewwandi'
         BACKEND_IMAGE   = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE  = "${DOCKERHUB_USER}/devops_frontend:latest"
     }
