@@ -2,59 +2,64 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_USER = 'sandunisewwandi'
-        FRONTEND_IMAGE = 'devops_frontend'
-        BACKEND_IMAGE = 'devops_backend'
+        DOCKERHUB_USER = "sandunisewwandi"
+        DOCKER_HUB_PASSWORD = credentials('Sanduni2001#') // Jenkins secret
+        FRONTEND_IMAGE = "devops_frontend"
+        BACKEND_IMAGE = "devops_backend"
+        FRONTEND_TAG   = "${DOCKERHUB_USER}/${FRONTEND_IMAGE}:latest"
+        BACKEND_TAG    = "${DOCKERHUB_USER}/${BACKEND_IMAGE}:latest"
     }
 
     stages {
-        stage('Checkout') {
+
+        stage('Build Backend Image') {
             steps {
-                git branch: 'main',
-                    url: 'https://github.com/SanduSewwandi/Devops_Project.git'
+                echo "Building Backend Docker Image..."
+                sh "docker build -t ${BACKEND_TAG} ./backEnd"
             }
         }
 
-        stage('Build Docker Images') {
+        stage('Build Frontend Image') {
             steps {
-                script {
-                    echo ' Building Frontend Image...'
-                    sh 'docker build -t $DOCKERHUB_USER/$FRONTEND_IMAGE:latest ./frontEnd'
-                    
-                    echo ' Building Backend Image...'
-                    sh 'docker build -t $DOCKERHUB_USER/$BACKEND_IMAGE:latest ./backEnd'
-                }
+                echo "Building Frontend Docker Image..."
+                sh "docker build -t ${FRONTEND_TAG} ./frontEnd"
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Push Images to Docker Hub') {
             steps {
-                withCredentials([usernamePassword(credentialsId: 'dockerhub-credentials', usernameVariable: 'USERNAME', passwordVariable: 'PASSWORD')]) {
-                    sh 'echo $PASSWORD | docker login -u $USERNAME --password-stdin'
-                    sh 'docker push $DOCKERHUB_USER/$FRONTEND_IMAGE:latest'
-                    sh 'docker push $DOCKERHUB_USER/$BACKEND_IMAGE:latest'
-                }
+                echo "Logging in to Docker Hub..."
+                sh "echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKERHUB_USER} --password-stdin"
+                
+                echo "Pushing Backend Image..."
+                sh "docker push ${BACKEND_TAG}"
+                
+                echo "Pushing Frontend Image..."
+                sh "docker push ${FRONTEND_TAG}"
             }
         }
 
-        stage('Deploy with Docker Compose') {
+        stage('Deploy Containers') {
             steps {
-                echo ' Deploying application...'
-                sh 'docker-compose down || true'
-                sh 'docker-compose up -d'
+                echo "Stopping existing containers..."
+                sh "docker rm -f devops-backend || true"
+                sh "docker rm -f devops-frontend || true"
+
+                echo "Running Backend Container..."
+                sh "docker run -d --name devops-backend -p 8080:8080 ${BACKEND_TAG}"
+
+                echo "Running Frontend Container..."
+                sh "docker run -d --name devops-frontend -p 5173:5173 ${FRONTEND_TAG}"
             }
         }
     }
 
     post {
         success {
-            echo ' Build and deployment completed successfully!'
+            echo "Deployment Successful!"
         }
         failure {
-            echo ' Build or deployment failed!'
-        }
-        always {
-            sh 'docker logout'
+            echo "Deployment Failed!"
         }
     }
 }
