@@ -16,7 +16,7 @@ pipeline {
             }
         }
 
-        stage('Build Docker Images') {
+        stage('Build Images') {
             steps {
                 echo 'Building backend image...'
                 sh 'docker build -t reactweb1-backend ./backEnd'
@@ -26,7 +26,7 @@ pipeline {
             }
         }
 
-        stage('Tag Images for Docker Hub') {
+        stage('Tag Images') {
             steps {
                 sh "docker tag reactweb1-backend ${BACKEND_IMAGE}"
                 sh "docker tag reactweb1-frontend ${FRONTEND_IMAGE}"
@@ -46,7 +46,7 @@ pipeline {
 
         stage('Prepare Compose Folders') {
             steps {
-                echo 'Copying backend/frontend folders to match docker-compose.yml expectations...'
+                echo 'Copying folders to match docker-compose.yml expectations...'
                 sh '''
                     rm -rf backend frontend || true
                     cp -r backEnd backend
@@ -59,7 +59,7 @@ pipeline {
             steps {
                 echo 'Stopping containers or processes using ports 5000, 5173, 27017...'
                 sh '''
-                    # Remove old containers by name
+                    # Remove containers by name if they exist
                     docker rm -f backend frontend mongo || true
 
                     # Kill any process using the ports
@@ -75,7 +75,7 @@ pipeline {
 
         stage('Deploy Containers') {
             steps {
-                echo 'Deploying backend, frontend, and MongoDB using Docker Compose...'
+                echo 'Deploying using Docker Compose...'
                 sh 'docker-compose up -d --build'
             }
         }
