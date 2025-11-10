@@ -2,64 +2,36 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_USER = "sandusewwandi"
-        DOCKER_HUB_PASSWORD = credentials('docker-hub-password') // Jenkins secret
-        FRONTEND_IMAGE = "devops_frontend"
-        BACKEND_IMAGE = "devops_backend"
-        FRONTEND_TAG   = "${DOCKERHUB_USER}/${FRONTEND_IMAGE}:latest"
-        BACKEND_TAG    = "${DOCKERHUB_USER}/${BACKEND_IMAGE}:latest"
+        DOCKER_IMAGE_BACKEND = "sandusewwandi/devops_backend:latest"
+        DOCKER_IMAGE_FRONTEND = "sandusewwandi/devops_frontend:latest"
     }
 
     stages {
-
-        stage('Build Backend Image') {
+        stage('Deploy Backend & Frontend') {
             steps {
-                echo "Building Backend Docker Image..."
-                sh "docker build -t ${BACKEND_TAG} ./backEnd"
-            }
-        }
+                script {
+                    // Stop existing containers
+                    sh 'docker rm -f devops_backend || true'
+                    sh 'docker rm -f devops_frontend || true'
 
-        stage('Build Frontend Image') {
-            steps {
-                echo "Building Frontend Docker Image..."
-                sh "docker build -t ${FRONTEND_TAG} ./frontEnd"
-            }
-        }
+                    // Pull latest images from Docker Hub
+                    sh "docker pull ${DOCKER_IMAGE_BACKEND}"
+                    sh "docker pull ${DOCKER_IMAGE_FRONTEND}"
 
-        stage('Push Images to Docker Hub') {
-            steps {
-                echo "Logging in to Docker Hub..."
-                sh "echo ${DOCKER_HUB_PASSWORD} | docker login -u ${DOCKERHUB_USER} --password-stdin"
-                
-                echo "Pushing Backend Image..."
-                sh "docker push ${BACKEND_TAG}"
-                
-                echo "Pushing Frontend Image..."
-                sh "docker push ${FRONTEND_TAG}"
-            }
-        }
-
-        stage('Deploy Containers') {
-            steps {
-                echo "Stopping existing containers..."
-                sh "docker rm -f devops-backend || true"
-                sh "docker rm -f devops-frontend || true"
-
-                echo "Running Backend Container..."
-                sh "docker run -d --name devops-backend -p 8080:8080 ${BACKEND_TAG}"
-
-                echo "Running Frontend Container..."
-                sh "docker run -d --name devops-frontend -p 5173:5173 ${FRONTEND_TAG}"
+                    // Run containers
+                    sh "docker run -d --name devops_backend -p 5000:5000 ${DOCKER_IMAGE_BACKEND}"
+                    sh "docker run -d --name devops_frontend -p 5173:5173 ${DOCKER_IMAGE_FRONTEND}"
+                }
             }
         }
     }
 
     post {
         success {
-            echo "Deployment Successful!"
+            echo 'Deployment Successful!'
         }
         failure {
-            echo "Deployment Failed!"
+            echo 'Deployment Failed!'
         }
     }
 }
