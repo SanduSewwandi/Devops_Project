@@ -57,14 +57,15 @@ pipeline {
 
         stage('Free Required Ports') {
             steps {
-                echo 'Killing processes or containers using ports 5000, 5173, 27017...'
+                echo 'Stopping containers or processes using ports 5000, 5173, 27017...'
                 sh '''
-                    # Kill containers by name if they exist
+                    # Remove containers by name if they exist
                     docker rm -f backend frontend mongo || true
 
-                    # Kill processes using the ports
+                    # Kill any process using the ports
                     for port in 5000 5173 27017; do
                         if lsof -i:$port -t >/dev/null; then
+                            echo "Killing process using port $port"
                             sudo kill -9 $(lsof -i:$port -t)
                         fi
                     done
