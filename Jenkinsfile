@@ -18,17 +18,17 @@ pipeline {
         stage('Build Images') {
             steps {
                 echo 'Building backend image...'
-                sh 'docker build -t reactweb1-backend  ./backend'
+                sh 'docker build -t reactweb1-backend ./backEnd'
 
                 echo 'Building frontend image...'
-                sh 'docker build -t reactweb1-frontend  ./frontend'
+                sh 'docker build -t reactweb1-frontend ./frontEnd'
             }
         }
 
         stage('Tag Images') {
             steps {
-                sh "docker tag reactweb1-backend  ${BACKEND_IMAGE}"
-                sh "docker tag reactweb1-frontend  ${FRONTEND_IMAGE}"
+                sh "docker tag reactweb1-backend ${BACKEND_IMAGE}"
+                sh "docker tag reactweb1-frontend ${FRONTEND_IMAGE}"
             }
         }
 
@@ -44,17 +44,16 @@ pipeline {
         }
 
         stage('Deploy Containers') {
-    steps {
-        echo 'Removing old containers if they exist...'
-        sh 'docker rm -f mongo || true'
-        sh 'docker rm -f backend || true'
-        sh 'docker rm -f frontend || true'
+            steps {
+                echo 'Removing old containers if they exist...'
+                sh 'docker rm -f mongo || true'
+                sh 'docker rm -f backend || true'
+                sh 'docker rm -f frontend || true'
 
-        echo 'Deploying using Docker Compose...'
-        sh 'docker-compose up -d --build'
-    }
-}
-
+                echo 'Deploying using Docker Compose...'
+                sh 'docker-compose up -d --build'
+            }
+        }
     }
 
     post {
