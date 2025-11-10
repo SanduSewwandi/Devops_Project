@@ -2,88 +2,65 @@ pipeline {
     agent any
 
     environment {
-        DOCKER_IMAGE_BACKEND = "sandusewwandi/devops_backend:latest"
-        DOCKER_IMAGE_FRONTEND = "sandusewwandi/devops_frontend:latest"
-        DEFAULT_BACKEND_PORT = "5000"
-        DEFAULT_FRONTEND_PORT = "5173"
+        DOCKERHUB_CREDS = 'plantcredential'
+        DOCKERHUB_USER  = 'sandunisewwandi'
+        BACKEND_IMAGE   = "${DOCKERHUB_USER}/devops_backend:latest"
+        FRONTEND_IMAGE  = "${DOCKERHUB_USER}/devops_frontend:latest"
     }
 
     stages {
-        stage('Clean Existing Containers & Ports') {
+        stage('Checkout') {
             steps {
-                script {
-                    // Remove existing backend container
-                    sh 'docker rm -f devops_backend || true'
+                checkout scm
+            }
+        }
 
-                    // Remove existing frontend container
-                    sh 'docker rm -f devops_frontend || true'
+        stage('Build Images') {
+            steps {
+                echo 'Building backend image...'
+                sh 'docker build -t reactweb1-backend  ./backend'
 
-                    // Kill any process using backend port
-                    sh '''
-                    if lsof -i:${DEFAULT_BACKEND_PORT} -t >/dev/null; then
-                        sudo kill -9 $(lsof -i:${DEFAULT_BACKEND_PORT} -t)
-                    fi
-                    '''
+                echo 'Building frontend image...'
+                sh 'docker build -t reactweb1-frontend  ./frontend'
+            }
+        }
 
-                    // Kill any process using frontend port
-                    sh '''
-                    if lsof -i:${DEFAULT_FRONTEND_PORT} -t >/dev/null; then
-                        sudo kill -9 $(lsof -i:${DEFAULT_FRONTEND_PORT} -t)
-                    fi
-                    '''
+        stage('Tag Images') {
+            steps {
+                sh "docker tag reactweb1-backend  ${BACKEND_IMAGE}"
+                sh "docker tag reactweb1-frontend  ${FRONTEND_IMAGE}"
+            }
+        }
+
+        stage('Push Images to Docker Hub') {
+            steps {
+                withCredentials([usernamePassword(credentialsId: "${DOCKERHUB_CREDS}", usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+                    sh 'echo $DH_PASS | docker login -u $DH_USER --password-stdin'
+                    sh "docker push ${BACKEND_IMAGE}"
+                    sh "docker push ${FRONTEND_IMAGE}"
+                    sh 'docker logout'
                 }
             }
         }
 
-        stage('Pull Latest Docker Images') {
-            steps {
-                script {
-                    sh "docker pull ${DOCKER_IMAGE_BACKEND}"
-                    sh "docker pull ${DOCKER_IMAGE_FRONTEND}"
-                }
-            }
-        }
+        stage('Deploy Containers') {
+    steps {
+        echo 'Removing old containers if they exist...'
+        sh 'docker rm -f mongo || true'
+        sh 'docker rm -f backend || true'
+        sh 'docker rm -f frontend || true'
 
-        stage('Run Backend & Frontend Containers') {
-            steps {
-                script {
-                    // Check if backend port is free, otherwise pick a random free port
-                    env.BACKEND_PORT = sh(script: """
-                        PORT=${DEFAULT_BACKEND_PORT}
-                        while lsof -i:\$PORT -t >/dev/null; do
-                            PORT=\$((PORT+1))
-                        done
-                        echo \$PORT
-                    """, returnStdout: true).trim()
+        echo 'Deploying using Docker Compose...'
+        sh 'docker-compose up -d --build'
+    }
+}
 
-                    // Check if frontend port is free, otherwise pick a random free port
-                    env.FRONTEND_PORT = sh(script: """
-                        PORT=${DEFAULT_FRONTEND_PORT}
-                        while lsof -i:\$PORT -t >/dev/null; do
-                            PORT=\$((PORT+1))
-                        done
-                        echo \$PORT
-                    """, returnStdout: true).trim()
-
-                    echo "Using backend port: ${BACKEND_PORT}"
-                    echo "Using frontend port: ${FRONTEND_PORT}"
-
-                    // Run backend container
-                    sh "docker run -d --name devops_backend -p ${BACKEND_PORT}:5000 ${DOCKER_IMAGE_BACKEND}"
-
-                    // Run frontend container
-                    sh "docker run -d --name devops_frontend -p ${FRONTEND_PORT}:5173 ${DOCKER_IMAGE_FRONTEND}"
-                }
-            }
-        }
     }
 
     post {
-        success {
-            echo "Deployment Successful!"
-        }
-        failure {
-            echo "Deployment Failed!"
+        always {
+            echo 'Cleaning up unused Docker images...'
+            sh 'docker image prune -f'
         }
     }
 }
