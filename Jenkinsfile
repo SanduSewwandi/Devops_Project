@@ -55,13 +55,25 @@ pipeline {
             }
         }
 
+        stage('Free Required Ports') {
+            steps {
+                echo 'Killing processes or containers using ports 5000, 5173, 27017...'
+                sh '''
+                    # Kill containers by name if they exist
+                    docker rm -f backend frontend mongo || true
+
+                    # Kill processes using the ports
+                    for port in 5000 5173 27017; do
+                        if lsof -i:$port -t >/dev/null; then
+                            sudo kill -9 $(lsof -i:$port -t)
+                        fi
+                    done
+                '''
+            }
+        }
+
         stage('Deploy Containers') {
             steps {
-                echo 'Removing old containers if they exist...'
-                sh 'docker rm -f mongo || true'
-                sh 'docker rm -f backend || true'
-                sh 'docker rm -f frontend || true'
-
                 echo 'Deploying using Docker Compose...'
                 sh 'docker-compose up -d --build'
             }
