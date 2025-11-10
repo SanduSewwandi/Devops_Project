@@ -12,6 +12,7 @@ pipeline {
         stage('Checkout') {
             steps {
                 checkout scm
+                sh 'ls -R'
             }
         }
 
@@ -43,6 +44,17 @@ pipeline {
             }
         }
 
+        stage('Prepare Compose Folders') {
+            steps {
+                echo 'Copying folders to match docker-compose.yml expectations...'
+                sh '''
+                    rm -rf backend frontend || true
+                    cp -r backEnd backend
+                    cp -r frontEnd frontend
+                '''
+            }
+        }
+
         stage('Deploy Containers') {
             steps {
                 echo 'Removing old containers if they exist...'
@@ -58,8 +70,11 @@ pipeline {
 
     post {
         always {
-            echo 'Cleaning up unused Docker images...'
-            sh 'docker image prune -f'
+            echo 'Cleaning up temporary folders and unused Docker images...'
+            sh '''
+                rm -rf backend frontend || true
+                docker image prune -f
+            '''
         }
     }
 }
