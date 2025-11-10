@@ -62,12 +62,11 @@ pipeline {
                     # Remove containers by name if they exist
                     docker rm -f backend frontend mongo || true
 
-                    # Kill any host process using the ports
+                    # Kill any process using the ports
                     for port in 5000 5173 27017; do
-                        PID=$(lsof -ti:$port)
-                        if [ ! -z "$PID" ]; then
-                            echo "Killing process $PID using port $port"
-                            sudo kill -9 $PID || true
+                        if lsof -i:$port -t >/dev/null; then
+                            echo "Killing process using port $port"
+                            sudo kill -9 $(lsof -i:$port -t)
                         fi
                     done
                 '''
