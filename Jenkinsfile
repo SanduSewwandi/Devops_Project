@@ -2,8 +2,8 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_USER = "sandunisewwandi"
-        DOCKER_HUB_PASSWORD = credentials('Sanduni2001#') // Jenkins secret
+        DOCKERHUB_USER = "sandusewwandi"
+        DOCKER_HUB_PASSWORD = credentials('docker-hub-password') // Jenkins secret
         FRONTEND_IMAGE = "devops_frontend"
         BACKEND_IMAGE = "devops_backend"
         FRONTEND_TAG   = "${DOCKERHUB_USER}/${FRONTEND_IMAGE}:latest"
