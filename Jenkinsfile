@@ -12,11 +12,21 @@ pipeline {
         stage('Clean Existing Containers & Ports') {
             steps {
                 script {
-                    // Force remove backend container if exists
-                    sh 'docker rm -f devops_backend || true'
+                    // Remove any container using backend port
+                    sh '''
+                    backend_container=$(docker ps -aq --filter "publish=${BACKEND_PORT}")
+                    if [ ! -z "$backend_container" ]; then
+                        docker rm -f $backend_container
+                    fi
+                    '''
 
-                    // Force remove frontend container if exists
-                    sh 'docker rm -f devops_frontend || true'
+                    // Remove any container using frontend port
+                    sh '''
+                    frontend_container=$(docker ps -aq --filter "publish=${FRONTEND_PORT}")
+                    if [ ! -z "$frontend_container" ]; then
+                        docker rm -f $frontend_container
+                    fi
+                    '''
 
                     // Kill any process using backend port
                     sh '''
