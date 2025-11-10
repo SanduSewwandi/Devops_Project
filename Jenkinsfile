@@ -19,7 +19,7 @@ pipeline {
                     fi
                     '''
 
-                    # Stop and remove frontend container if exists
+                    // Stop and remove frontend container if exists
                     sh '''
                     if [ $(docker ps -q -f "name=devops_frontend") ]; then
                         docker rm -f devops_frontend
@@ -48,10 +48,7 @@ pipeline {
         stage('Run Backend & Frontend Containers') {
             steps {
                 script {
-                    // Run backend
                     sh "docker run -d --name devops_backend -p ${BACKEND_PORT}:5000 ${DOCKER_IMAGE_BACKEND}"
-                    
-                    // Run frontend
                     sh "docker run -d --name devops_frontend -p ${FRONTEND_PORT}:5173 ${DOCKER_IMAGE_FRONTEND}"
                 }
             }
