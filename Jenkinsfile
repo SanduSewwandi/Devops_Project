@@ -12,24 +12,23 @@ pipeline {
         stage('Clean Existing Containers & Ports') {
             steps {
                 script {
-                    // Stop and remove backend container if exists
-                    sh '''
-                    if [ $(docker ps -q -f "name=devops_backend") ]; then
-                        docker rm -f devops_backend
-                    fi
-                    '''
+                    // Force remove backend container if exists
+                    sh 'docker rm -f devops_backend || true'
 
-                    // Stop and remove frontend container if exists
-                    sh '''
-                    if [ $(docker ps -q -f "name=devops_frontend") ]; then
-                        docker rm -f devops_frontend
-                    fi
-                    '''
+                    // Force remove frontend container if exists
+                    sh 'docker rm -f devops_frontend || true'
 
-                    // Optional: Kill any process using backend port
+                    // Kill any process using backend port
                     sh '''
                     if lsof -i:${BACKEND_PORT} -t >/dev/null; then
                         sudo kill -9 $(lsof -i:${BACKEND_PORT} -t)
+                    fi
+                    '''
+
+                    // Kill any process using frontend port
+                    sh '''
+                    if lsof -i:${FRONTEND_PORT} -t >/dev/null; then
+                        sudo kill -9 $(lsof -i:${FRONTEND_PORT} -t)
                     fi
                     '''
                 }
@@ -48,7 +47,10 @@ pipeline {
         stage('Run Backend & Frontend Containers') {
             steps {
                 script {
+                    // Run backend container
                     sh "docker run -d --name devops_backend -p ${BACKEND_PORT}:5000 ${DOCKER_IMAGE_BACKEND}"
+
+                    // Run frontend container
                     sh "docker run -d --name devops_frontend -p ${FRONTEND_PORT}:5173 ${DOCKER_IMAGE_FRONTEND}"
                 }
             }
