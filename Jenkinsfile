@@ -16,7 +16,7 @@ pipeline {
             }
         }
 
-        stage('Build Images') {
+        stage('Build Docker Images') {
             steps {
                 echo 'Building backend image...'
                 sh 'docker build -t reactweb1-backend ./backEnd'
@@ -26,7 +26,7 @@ pipeline {
             }
         }
 
-        stage('Tag Images') {
+        stage('Tag Images for Docker Hub') {
             steps {
                 sh "docker tag reactweb1-backend ${BACKEND_IMAGE}"
                 sh "docker tag reactweb1-frontend ${FRONTEND_IMAGE}"
@@ -59,14 +59,20 @@ pipeline {
             steps {
                 echo 'Stopping containers or processes using ports 5000, 5173, 27017...'
                 sh '''
-                    # Remove containers by name if they exist
-                    docker rm -f backend frontend mongo || true
+                    # Remove old containers if they exist
+                    for cname in reactweb1_pipeline_backend_1 reactweb1_pipeline_frontend_1 reactweb1_pipeline_mongo_1; do
+                        if [ "$(docker ps -a -q -f name=$cname)" ]; then
+                            echo "Removing container $cname"
+                            docker rm -f $cname
+                        fi
+                    done
 
-                    # Kill any process using the ports
+                    # Kill processes using the ports
                     for port in 5000 5173 27017; do
-                        if lsof -i:$port -t >/dev/null; then
+                        pid=$(lsof -ti:$port)
+                        if [ ! -z "$pid" ]; then
                             echo "Killing process using port $port"
-                            sudo kill -9 $(lsof -i:$port -t)
+                            sudo kill -9 $pid
                         fi
                     done
                 '''
@@ -75,7 +81,7 @@ pipeline {
 
         stage('Deploy Containers') {
             steps {
-                echo 'Deploying using Docker Compose...'
+                echo 'Deploying backend, frontend, and MongoDB using Docker Compose...'
                 sh 'docker-compose up -d --build'
             }
         }
