@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_CREDS = 'plantcredential'
+        DOCKERHUB_CREDS = 'plantcredentials'
         DOCKERHUB_USER  = 'sandusewwandi'
         BACKEND_IMAGE   = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE  = "${DOCKERHUB_USER}/devops_frontend:latest"
