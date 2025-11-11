@@ -16,14 +16,17 @@ pipeline {
             }
         }
 
-        stage('Build Images') {
+        stage('Build Docker Images') {
             steps {
+                echo 'Building backend image...'
                 sh 'docker build -t reactweb1-backend ./backEnd'
+
+                echo 'Building frontend image...'
                 sh 'docker build -t reactweb1-frontend ./frontEnd'
             }
         }
 
-        stage('Tag Images') {
+        stage('Tag Images for Docker Hub') {
             steps {
                 sh "docker tag reactweb1-backend ${BACKEND_IMAGE}"
                 sh "docker tag reactweb1-frontend ${FRONTEND_IMAGE}"
@@ -41,53 +44,60 @@ pipeline {
             }
         }
 
+        stage('Prepare Compose Folders') {
+            steps {
+                echo 'Copying folders to match docker-compose.yml expectations...'
+                sh '''
+                    rm -rf backend frontend || true
+                    cp -r backEnd backend
+                    cp -r frontEnd frontend
+                '''
+            }
+        }
+
         stage('Free Required Ports') {
             steps {
+                echo 'Stopping containers or processes using ports 5000, 5173, 27017...'
                 sh '''
-                    echo "Stopping old containers..."
-                    docker rm -f backend frontend mongo || true
+                    # Remove old containers if they exist
+                    for cname in reactweb1_pipeline_backend_1 reactweb1_pipeline_frontend_1 reactweb1_pipeline_mongo_1; do
+                        if [ "$(docker ps -a -q -f name=$cname)" ]; then
+                            echo "Removing container $cname"
+                            docker rm -f $cname
+                        else
+                            echo "No existing container named $cname"
+                        fi
+                    done
 
-                    echo "Checking port 27017..."
-                    pid=$(lsof -ti:27017)
-
-                    if [ ! -z "$pid" ]; then
-                        cmd=$(ps -p $pid -o comm=)
-                        if [[ "$cmd" == "docker-proxy" || "$cmd" == "docker" ]]; then
-                            echo "Port 27017 is used by Docker process: $pid ($cmd). Killing..."
+                    # Kill processes using the ports
+                    for port in 5000 5173 27017; do
+                        pid=$(lsof -ti:$port || true)
+                        if [ ! -z "$pid" ]; then
+                            echo "Killing process using port $port"
                             sudo kill -9 $pid
                         else
-                            echo "WARNING: Port 27017 is used by a system process ($cmd). Aborting to avoid breaking host MongoDB."
-                            exit 1
+                            echo "No process found on port $port"
                         fi
-                    else
-                        echo "Port 27017 is free"
-                    fi
+                    done
                 '''
             }
         }
 
         stage('Deploy Containers') {
             steps {
-                sh '''
-                    echo "Ensuring no leftover containers block deployment"
-                    docker-compose down || true
-
-                    retries=3
-                    for i in $(seq 1 $retries); do
-                        docker-compose up -d --build && break || {
-                            echo "Attempt $i failed, waiting 5s..."
-                            sleep 5
-                        }
-                    done
-                '''
+                echo 'Deploying backend, frontend, and MongoDB using Docker Compose...'
+                sh 'docker-compose up -d --build'
             }
         }
     }
 
     post {
         always {
-            echo 'Cleaning up unused Docker images...'
-            sh 'docker image prune -f'
+            echo 'Cleaning up temporary folders and unused Docker images...'
+            sh '''
+                rm -rf backend frontend || true
+                docker image prune -f
+            '''
         }
     }
 }
