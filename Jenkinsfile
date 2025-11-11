@@ -64,24 +64,24 @@ pipeline {
             steps {
                 echo 'Cleaning up old containers and freeing ports...'
                 sh '''
-                    echo "Stopping old containers if they exist..."
+                    echo "Stopping old containers..."
                     docker rm -f reactweb1_pipeline_backend_1 reactweb1_pipeline_frontend_1 reactweb1_pipeline_mongo_1 2>/dev/null || true
+                    docker rm -f reactweb1_backend_1 reactweb1_frontend_1 reactweb1_mongo_1 2>/dev/null || true
 
-                    echo "Checking and freeing ports 5000, 5173, 27017..."
+                    echo "Killing Docker proxy processes holding ports 5000, 5173, 27017..."
                     for port in 5000 5173 27017; do
-                        echo "Checking port $port..."
-                        pid=$(lsof -ti:$port || true)
-                        if [ ! -z "$pid" ]; then
+                        while pid=$(lsof -ti:$port || true); [ ! -z "$pid" ]; do
                             cmd=$(ps -p $pid -o comm=)
                             if [[ "$cmd" == "docker-proxy" || "$cmd" == "docker" ]]; then
-                                echo "Port $port is used by Docker process: $pid ($cmd). Killing..."
+                                echo "Port $port used by Docker process $pid ($cmd). Killing..."
                                 sudo kill -9 $pid || true
+                                sleep 1
                             else
-                                echo "⚠️  Port $port is used by a system process ($cmd). Skipping to avoid breaking host services."
+                                echo "WARNING: Port $port is used by system process $cmd. Aborting to avoid breaking host services."
+                                exit 1
                             fi
-                        else
-                            echo "✅ Port $port is free"
-                        fi
+                        done
+                        echo "✅ Port $port is free"
                     done
                 '''
             }
@@ -91,7 +91,7 @@ pipeline {
             steps {
                 echo 'Deploying backend, frontend, and MongoDB using Docker Compose...'
                 sh '''
-                    docker-compose down || true
+                    docker-compose down -v --remove-orphans || true
                     docker-compose up -d --build
                 '''
             }
@@ -100,7 +100,7 @@ pipeline {
 
     post {
         always {
-            echo 'Cleaning up temporary folders and unused Docker data...'
+            echo 'Cleaning up temporary folders and unused Docker resources...'
             sh '''
                 rm -rf backend frontend || true
                 docker image prune -f
