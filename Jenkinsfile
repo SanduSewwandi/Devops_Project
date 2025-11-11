@@ -11,6 +11,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
+                echo 'Checking out source code...'
                 checkout scm
                 sh 'ls -R'
             }
@@ -28,6 +29,7 @@ pipeline {
 
         stage('Tag Images for Docker Hub') {
             steps {
+                echo 'Tagging images for Docker Hub...'
                 sh "docker tag reactweb1-backend ${BACKEND_IMAGE}"
                 sh "docker tag reactweb1-frontend ${FRONTEND_IMAGE}"
             }
@@ -35,18 +37,21 @@ pipeline {
 
         stage('Push Images to Docker Hub') {
             steps {
+                echo 'Pushing images to Docker Hub...'
                 withCredentials([usernamePassword(credentialsId: "${DOCKERHUB_CREDS}", usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
-                    sh 'echo $DH_PASS | docker login -u $DH_USER --password-stdin'
-                    sh "docker push ${BACKEND_IMAGE}"
-                    sh "docker push ${FRONTEND_IMAGE}"
-                    sh 'docker logout'
+                    sh '''
+                        echo $DH_PASS | docker login -u $DH_USER --password-stdin
+                        docker push ${BACKEND_IMAGE}
+                        docker push ${FRONTEND_IMAGE}
+                        docker logout
+                    '''
                 }
             }
         }
 
         stage('Prepare Compose Folders') {
             steps {
-                echo 'Copying folders to match docker-compose.yml expectations...'
+                echo 'Preparing folder structure for docker-compose...'
                 sh '''
                     rm -rf backend frontend || true
                     cp -r backEnd backend
@@ -57,26 +62,25 @@ pipeline {
 
         stage('Free Required Ports') {
             steps {
-                echo 'Stopping containers or processes using ports 5000, 5173, 27017...'
+                echo 'Cleaning up old containers and freeing ports...'
                 sh '''
-                    # Remove old containers if they exist
-                    for cname in reactweb1_pipeline_backend_1 reactweb1_pipeline_frontend_1 reactweb1_pipeline_mongo_1; do
-                        if [ "$(docker ps -a -q -f name=$cname)" ]; then
-                            echo "Removing container $cname"
-                            docker rm -f $cname
-                        else
-                            echo "No existing container named $cname"
-                        fi
-                    done
+                    echo "Stopping old containers if they exist..."
+                    docker rm -f reactweb1_pipeline_backend_1 reactweb1_pipeline_frontend_1 reactweb1_pipeline_mongo_1 2>/dev/null || true
 
-                    # Kill processes using the ports
+                    echo "Checking and freeing ports 5000, 5173, 27017..."
                     for port in 5000 5173 27017; do
+                        echo "Checking port $port..."
                         pid=$(lsof -ti:$port || true)
                         if [ ! -z "$pid" ]; then
-                            echo "Killing process using port $port"
-                            sudo kill -9 $pid
+                            cmd=$(ps -p $pid -o comm=)
+                            if [[ "$cmd" == "docker-proxy" || "$cmd" == "docker" ]]; then
+                                echo "Port $port is used by Docker process: $pid ($cmd). Killing..."
+                                sudo kill -9 $pid || true
+                            else
+                                echo "⚠️  Port $port is used by a system process ($cmd). Skipping to avoid breaking host services."
+                            fi
                         else
-                            echo "No process found on port $port"
+                            echo "✅ Port $port is free"
                         fi
                     done
                 '''
@@ -86,17 +90,23 @@ pipeline {
         stage('Deploy Containers') {
             steps {
                 echo 'Deploying backend, frontend, and MongoDB using Docker Compose...'
-                sh 'docker-compose up -d --build'
+                sh '''
+                    docker-compose down || true
+                    docker-compose up -d --build
+                '''
             }
         }
     }
 
     post {
         always {
-            echo 'Cleaning up temporary folders and unused Docker images...'
+            echo 'Cleaning up temporary folders and unused Docker data...'
             sh '''
                 rm -rf backend frontend || true
                 docker image prune -f
+                docker container prune -f
+                docker network prune -f
+                docker volume prune -f
             '''
         }
     }
