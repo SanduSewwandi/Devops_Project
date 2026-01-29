@@ -6,6 +6,8 @@ pipeline {
         DOCKERHUB_USER  = 'sandusewwandi'
         BACKEND_IMAGE  = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE = "${DOCKERHUB_USER}/devops_frontend:latest"
+        DOCKER_BUILDKIT = '1'
+        NPM_CONFIG_LOGLEVEL = 'warn'
     }
 
     stages {
@@ -13,24 +15,31 @@ pipeline {
             steps {
                 checkout scm
                 sh '''
-                    echo "=== Workspace Setup ==="
+                    set -e
+                    echo "=== Project Structure ==="
                     pwd
                     ls -la
+
+                    echo "=== Checking Critical Files ==="
+                    test -f docker-compose.yml
+                    test -f backEnd/Dockerfile
+                    test -f frontEnd/Dockerfile
+                    echo "✅ All required files exist"
                     
-                    # Create docker-compose.yml if missing
-                    if [ ! -f docker-compose.yml ]; then
-                        echo "Creating docker-compose.yml..."
-                        cat > docker-compose.yml << 'EOF'
-version: '3'
+                    echo "=== Creating corrected docker-compose.yml ==="
+                    cat > docker-compose.yml << 'EOF'
+version: '3.8'
 
 services:
-  mongodb:
-    image: mongo:6
-    container_name: mongodb
+  frontend:
+    image: sandusewwandi/devops_frontend:latest
+    container_name: frontend
     ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
+      - "5173:5173"
+    environment:
+      - REACT_APP_API_URL=http://backend:5000
+    depends_on:
+      - backend
     restart: unless-stopped
 
   backend:
@@ -39,59 +48,79 @@ services:
     ports:
       - "5000:5000"
     environment:
-      - MONGODB_URI=mongodb://mongodb:27017/devops
+      - MONGODB_URI=mongodb://mongo:27017/devops
+      - NODE_ENV=production
     depends_on:
-      - mongodb
+      - mongo
     restart: unless-stopped
 
-  frontend:
-    image: sandusewwandi/devops_frontend:latest
-    container_name: frontend
+  mongo:
+    image: mongo:6
+    container_name: mongo
     ports:
-      - "5173:5173"
-    depends_on:
-      - backend
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
     restart: unless-stopped
 
 volumes:
   mongo_data:
 EOF
-                        echo "✅ docker-compose.yml created"
-                    else
-                        echo "✅ Using existing docker-compose.yml"
-                    fi
-                    
-                    # Show the file
-                    echo "=== docker-compose.yml ==="
-                    cat docker-compose.yml
+                    echo "✅ Updated docker-compose.yml created"
                 '''
             }
         }
 
-        stage('Build Images') {
+        stage('Test Docker Setup') {
             steps {
                 sh '''
-                    echo "=== Building Images ==="
-                    
-                    # Build backend
-                    echo "1. Building backend..."
-                    cd backEnd
-                    docker build -t reactweb1-backend .
-                    docker tag reactweb1-backend ${BACKEND_IMAGE}
-                    
-                    # Build frontend
-                    echo "2. Building frontend..."
-                    cd ../frontEnd
-                    docker build -t reactweb1-frontend .
-                    docker tag reactweb1-frontend ${FRONTEND_IMAGE}
-                    
-                    echo "✅ Images built"
-                    docker images | grep -E "devops|reactweb"
+                    set -e
+                    echo "=== Testing Docker ==="
+                    docker --version
+                    docker ps > /dev/null
+                    docker-compose --version
+                    echo "✅ Docker is running"
                 '''
             }
         }
 
-        stage('Push to Docker Hub') {
+        stage('Validate Configuration') {
+            steps {
+                sh '''
+                    set -e
+                    echo "=== Validating Configuration ==="
+                    echo "Docker Compose validation:"
+                    docker-compose config
+                    
+                    echo "Checking available ports:"
+                    netstat -tulpn | grep -E ":5000|:5173|:27017" || echo "Ports are free"
+                    
+                    echo "Current images:"
+                    docker images | grep -E "devops|mongo"
+                '''
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                sh '''
+                    set -e
+                    echo "=== Building Backend ==="
+                    cd backEnd
+                    docker build --progress=plain -t reactweb1-backend .
+                    docker tag reactweb1-backend ${BACKEND_IMAGE}
+                    
+                    echo "=== Building Frontend ==="
+                    cd ../frontEnd
+                    docker build --progress=plain -t reactweb1-frontend .
+                    docker tag reactweb1-frontend ${FRONTEND_IMAGE}
+                    
+                    echo "✅ Images built and tagged"
+                '''
+            }
+        }
+
+        stage('Push Images to Docker Hub') {
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: "${DOCKERHUB_CREDS}",
@@ -99,138 +128,131 @@ EOF
                     passwordVariable: 'DH_PASS'
                 )]) {
                     sh '''
+                        set -e
                         echo "=== Pushing to Docker Hub ==="
                         echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
-                        
-                        docker push ${BACKEND_IMAGE} || echo "⚠️ Backend push warning"
-                        docker push ${FRONTEND_IMAGE} || echo "⚠️ Frontend push warning"
-                        
+
+                        echo "Pushing backend image..."
+                        docker push ${BACKEND_IMAGE}
+
+                        echo "Pushing frontend image..."
+                        docker push ${FRONTEND_IMAGE}
+
                         docker logout
-                        echo "✅ Images pushed"
+                        echo "✅ Images pushed successfully"
                     '''
                 }
             }
         }
 
-        stage('Debug: Before Deployment') {
+        stage('Cleanup Before Deployment') {
             steps {
                 sh '''
-                    echo "=== DEBUG: BEFORE DEPLOYMENT ==="
-                    echo ""
-                    echo "1. Testing docker-compose..."
-                    echo "Command: docker-compose config"
-                    docker-compose config
-                    echo "Exit code: $?"
-                    echo ""
-                    
-                    echo "2. Checking images..."
-                    docker images ${BACKEND_IMAGE}
-                    docker images ${FRONTEND_IMAGE}
-                    echo ""
-                    
-                    echo "3. Current containers..."
-                    docker ps -a
-                    echo ""
-                    
-                    echo "4. Clean up anything existing..."
-                    docker-compose down -v 2>/dev/null || true
+                    set -e
+                    echo "=== Cleaning Up ==="
+                    docker-compose down -v --remove-orphans || true
                     docker rm -f $(docker ps -aq) 2>/dev/null || true
-                    echo "Cleanup done"
+                    docker network prune -f || true
+                    echo "✅ Cleanup completed"
                 '''
             }
         }
 
-        stage('Deploy Manually') {
+        stage('Deploy Containers') {
             steps {
                 sh '''
-                    echo "=== DEPLOYING MANUALLY ==="
-                    echo "Starting containers one by one..."
-                    echo ""
+                    set -e
+                    echo "=== Deploying Containers ==="
                     
-                    # Start MongoDB
-                    echo "1. Starting MongoDB..."
-                    docker run -d \
-                      --name mongodb \
-                      -p 27017:27017 \
-                      -v mongo_data:/data/db \
-                      mongo:6
-                    sleep 3
+                    # Verify images exist
+                    echo "Checking images:"
+                    docker images | grep devops
                     
-                    # Start Backend
-                    echo "2. Starting Backend..."
-                    docker run -d \
-                      --name backend \
-                      -p 5000:5000 \
-                      --link mongodb:mongodb \
-                      -e MONGODB_URI=mongodb://mongodb:27017/devops \
-                      ${BACKEND_IMAGE}
-                    sleep 5
+                    # Start containers
+                    echo "Starting containers..."
+                    docker-compose up -d
                     
-                    # Start Frontend
-                    echo "3. Starting Frontend..."
-                    docker run -d \
-                      --name frontend \
-                      -p 5173:5173 \
-                      --link backend:backend \
-                      -e REACT_APP_API_URL=http://backend:5000 \
-                      ${FRONTEND_IMAGE}
-                    sleep 3
-                    
-                    echo "✅ All containers started manually"
-                    echo ""
-                    echo "=== Container Status ==="
-                    docker ps --format "table {{.Names}}\t{{.Status}}\t{{.Ports}}"
+                    # Wait with progress indicators
+                    echo "Waiting for containers to start..."
+                    for i in {1..6}; do
+                        echo "Wait $i/6 (10 seconds each)..."
+                        sleep 10
+                        echo "Current status:"
+                        docker-compose ps
+                        echo "---"
+                    done
                 '''
             }
         }
 
-        stage('Verify') {
+        stage('Verify Deployment') {
             steps {
                 sh '''
-                    echo "=== VERIFICATION ==="
-                    sleep 5
+                    set -e
+                    echo "=== Verifying Deployment ==="
                     
-                    # Check if containers are running
-                    echo "1. Checking container status..."
-                    running_count=$(docker ps -q | wc -l)
-                    echo "Running containers: $running_count/3"
+                    # Check container status
+                    total=$(docker-compose ps -q | wc -l)
+                    running=$(docker-compose ps -q | xargs docker inspect -f "{{.State.Status}}" 2>/dev/null | grep -c "running")
                     
-                    if [ "$running_count" -lt 3 ]; then
-                        echo "❌ Some containers failed"
-                        docker ps -a
-                        echo ""
-                        echo "Container logs:"
-                        docker logs mongodb --tail=20 2>/dev/null || true
-                        docker logs backend --tail=20 2>/dev/null || true
-                        docker logs frontend --tail=20 2>/dev/null || true
+                    echo "Containers: $running/$total running"
+                    
+                    if [ "$total" -eq 0 ]; then
+                        echo "❌ ERROR: No containers found!"
+                        docker-compose logs
                         exit 1
                     fi
                     
-                    # Test backend
-                    echo "2. Testing backend..."
-                    if curl -s -f http://localhost:5000 > /dev/null; then
-                        echo "✅ Backend is responding"
-                    else
-                        echo "⚠️ Backend not responding via curl"
-                        docker logs backend --tail=30
+                    if [ "$running" -ne "$total" ]; then
+                        echo "❌ ERROR: Not all containers are running"
+                        echo "=== Container Details ==="
+                        docker-compose ps -a
+                        echo "=== Logs ==="
+                        docker-compose logs --tail=100
+                        exit 1
                     fi
                     
+                    # Test services
+                    echo "=== Testing Services ==="
+                    
+                    # Test backend
+                    echo "Testing backend (max 30 seconds)..."
+                    for i in {1..10}; do
+                        if curl -s -f http://localhost:5000/health 2>/dev/null; then
+                            echo "✅ Backend health check passed"
+                            break
+                        elif curl -s -f http://localhost:5000 2>/dev/null; then
+                            echo "✅ Backend is responding"
+                            break
+                        fi
+                        
+                        if [ $i -eq 10 ]; then
+                            echo "⚠️ Backend not responding to health check, but container is running"
+                            docker logs backend
+                        fi
+                        
+                        sleep 3
+                    done
+                    
                     # Test frontend
-                    echo "3. Testing frontend..."
-                    if curl -s -f http://localhost:5173 > /dev/null; then
+                    echo "Testing frontend..."
+                    if curl -s -f http://localhost:5173 2>/dev/null; then
                         echo "✅ Frontend is responding"
                     else
-                        echo "⚠️ Frontend not responding via curl (may be normal)"
-                        docker logs frontend --tail=30
+                        echo "⚠️ Frontend not directly accessible (might be React dev server)"
+                        docker logs frontend
                     fi
                     
                     echo ""
-                    echo "🎉 DEPLOYMENT SUCCESSFUL!"
-                    echo "========================"
-                    echo "Access URLs:"
+                    echo "🎉 DEPLOYMENT SUCCESSFUL"
+                    echo "======================================="
                     echo "Backend:  http://localhost:5000"
                     echo "Frontend: http://localhost:5173"
                     echo "MongoDB:  localhost:27017"
+                    echo "======================================="
+                    echo ""
+                    echo "Container status:"
+                    docker-compose ps
                 '''
             }
         }
@@ -239,32 +261,53 @@ EOF
     post {
         always {
             sh '''
-                echo "=== FINAL STATUS ==="
-                echo "All containers:"
-                docker ps -a 2>/dev/null || echo "No containers"
+                echo "=== Post Build Summary ==="
+                echo "Containers:"
+                docker-compose ps -a || true
                 echo ""
                 echo "Recent logs:"
-                docker logs backend --tail=10 2>/dev/null || true
+                docker-compose logs --tail=20 || true
             '''
-            echo "Build Result: ${currentBuild.currentResult}"
+
+            echo "==========================================="
+            echo "Build Result  : ${currentBuild.currentResult}"
+            echo "Build URL     : ${env.BUILD_URL}"
+            echo "==========================================="
         }
-        
-        failure {
+
+        success {
+            echo "🎉 PIPELINE COMPLETED SUCCESSFULLY"
             sh '''
-                echo "=== FAILURE ANALYSIS ==="
-                echo "1. Last docker-compose error:"
-                docker-compose logs --tail=20 2>/dev/null || echo "No docker-compose logs"
                 echo ""
-                echo "2. Docker events:"
-                docker events --since "5m" 2>/dev/null | tail -10 || echo "Cannot get events"
+                echo "📊 DEPLOYMENT SUMMARY"
+                echo "======================"
+                docker-compose ps
                 echo ""
-                echo "3. Disk space:"
-                df -h
+                echo "🌐 Access URLs:"
+                echo "Backend:  http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):5000"
+                echo "Frontend: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):5173"
+            '''
+        }
+
+        failure {
+            echo "❌ PIPELINE FAILED - INVESTIGATION NEEDED"
+            sh '''
+                echo "=== DEBUG INFORMATION ==="
+                echo "1. All containers:"
+                docker ps -a
                 echo ""
-                echo "4. Memory:"
-                free -h
+                echo "2. Docker images:"
+                docker images | grep -E "devops|reactweb"
+                echo ""
+                echo "3. Full docker-compose logs:"
+                docker-compose logs --tail=100 || true
+                echo ""
+                echo "4. System resources:"
+                docker system df
+                echo ""
+                echo "5. Network:"
+                docker network ls
             '''
         }
     }
 }
-
