@@ -1,26 +1,37 @@
+version: '3.8'
+
 services:
   frontend:
-    build: ./frontend
+    image: sandusewwandi/devops_frontend:latest  # Changed from build: to image:
+    container_name: frontend
     ports:
       - "5173:5173"
+    environment:
+      - REACT_APP_API_URL=http://backend:5000
     depends_on:
       - backend
+    restart: unless-stopped
 
   backend:
-    build: ./backend
+    image: sandusewwandi/devops_backend:latest  # Changed from build: to image:
+    container_name: backend
     ports:
       - "5000:5000"
     environment:
       - MONGODB_URI=mongodb://mongo:27017/devops
+      - NODE_ENV=production
     depends_on:
       - mongo
+    restart: unless-stopped
 
   mongo:
     image: mongo:6
+    container_name: mongo
     ports:
       - "27017:27017"
     volumes:
       - mongo_data:/data/db
+    restart: unless-stopped
 
 volumes:
   mongo_data:
