@@ -6,15 +6,15 @@ pipeline {
         DOCKERHUB_USER  = 'sandusewwandi'
         BACKEND_IMAGE  = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE = "${DOCKERHUB_USER}/devops_frontend:latest"
-        DOCKER_BUILDKIT = '1'  # Enable BuildKit for faster builds
+        DOCKER_BUILDKIT = '1'
         BUILDKIT_PROGRESS = 'plain'
-        NPM_CONFIG_CACHE = '/tmp/npm_cache'  # Cache npm packages
+        NPM_CONFIG_CACHE = '/tmp/npm_cache'
         NPM_CONFIG_LOGLEVEL = 'warn'
     }
 
     options {
         timeout(time: 30, unit: 'MINUTES')
-        retry(2)  # Retry on failure
+        retry(2)
         buildDiscarder(logRotator(numToKeepStr: '10'))
     }
 
@@ -27,7 +27,6 @@ pipeline {
                     pwd
                     ls -la
                     
-                    # Create optimized docker-compose.yml
                     cat > docker-compose.yml << 'EOF'
 version: '3.8'
 
@@ -67,7 +66,6 @@ volumes:
 EOF
                     echo "✅ docker-compose.yml created"
                     
-                    # Create .dockerignore files if they don't exist
                     if [ ! -f backEnd/.dockerignore ]; then
                         cat > backEnd/.dockerignore << 'DOCKERIGNORE'
 node_modules
@@ -108,15 +106,12 @@ DOCKERIGNORE
                 sh '''
                     echo "=== Setting Up Build Cache ==="
                     
-                    # Create cache directories
                     mkdir -p /tmp/npm_cache
                     mkdir -p /tmp/yarn_cache
                     
-                    # Check for existing Docker layers cache
                     echo "Checking for existing images to reuse..."
                     docker images | grep -E "node:|alpine:" || echo "No base images cached"
                     
-                    # Pre-pull base images for faster builds
                     echo "Pre-pulling base images..."
                     docker pull node:18-alpine 2>/dev/null || echo "Could not pre-pull node:18-alpine"
                     docker pull node:20-alpine 2>/dev/null || echo "Could not pre-pull node:20-alpine"
@@ -131,7 +126,6 @@ DOCKERIGNORE
                     echo "=== Building Backend (Optimized) ==="
                     cd backEnd
                     
-                    # Create optimized Dockerfile if it doesn't exist
                     if [ ! -f Dockerfile ]; then
                         cat > Dockerfile << 'DOCKERFILE'
 FROM node:18-alpine AS builder
@@ -148,7 +142,6 @@ CMD ["node", "server.js"]
 DOCKERFILE
                     fi
                     
-                    # Build with cache and parallel layers
                     echo "Building backend with cache optimization..."
                     time docker build \
                       --progress=plain \
@@ -169,7 +162,6 @@ DOCKERFILE
                     echo "=== Building Frontend (Optimized) ==="
                     cd frontEnd
                     
-                    # Create optimized Dockerfile if it doesn't exist
                     if [ ! -f Dockerfile ]; then
                         cat > Dockerfile << 'DOCKERFILE'
 FROM node:20-alpine AS builder
@@ -187,7 +179,6 @@ CMD ["nginx", "-g", "daemon off;"]
 DOCKERFILE
                     fi
                     
-                    # Create nginx config if needed
                     if [ ! -f nginx.conf ]; then
                         cat > nginx.conf << 'NGINX'
 server {
@@ -209,7 +200,6 @@ server {
 NGINX
                     fi
                     
-                    # Build with cache optimization
                     echo "Building frontend with cache optimization..."
                     time docker build \
                       --progress=plain \
@@ -256,15 +246,12 @@ NGINX
                 sh '''
                     echo "=== Deploying Application ==="
                     
-                    # Cleanup old containers
                     echo "Cleaning up old deployment..."
                     docker-compose down -v --remove-orphans 2>/dev/null || true
                     
-                    # Deploy new containers
                     echo "Starting services..."
                     docker-compose up -d
                     
-                    # Wait for services
                     echo "Waiting for services to start..."
                     for i in {1..10}; do
                         running=$(docker-compose ps -q | xargs docker inspect -f "{{.State.Status}}" 2>/dev/null | grep -c "running")
@@ -294,15 +281,12 @@ NGINX
                 sh '''
                     echo "=== Health Check ==="
                     
-                    # Final status
                     echo "Final container status:"
                     docker-compose ps
                     
-                    # Quick health checks (non-blocking)
                     echo ""
                     echo "Quick health checks..."
                     
-                    # Backend check
                     echo -n "Backend: "
                     if docker-compose ps backend | grep -q "Up"; then
                         echo "✅ Running"
@@ -310,7 +294,6 @@ NGINX
                         echo "❌ Not running"
                     fi
                     
-                    # Frontend check
                     echo -n "Frontend: "
                     if docker-compose ps frontend | grep -q "Up"; then
                         echo "✅ Running"
@@ -318,7 +301,6 @@ NGINX
                         echo "❌ Not running"
                     fi
                     
-                    # MongoDB check
                     echo -n "MongoDB: "
                     if docker-compose ps mongodb | grep -q "Up"; then
                         echo "✅ Running"
