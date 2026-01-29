@@ -35,10 +35,6 @@ coverage
 CHANGELOG.md
 README.md
 
-# Docker files
-Dockerfile
-.dockerignore
-docker-compose*.yml
 
 # Tests
 test
