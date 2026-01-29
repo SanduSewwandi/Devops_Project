@@ -24,6 +24,7 @@ coverage
 *.swo
 *~
 
+
 # Version control
 .git
 .gitignore

@@ -16,6 +16,7 @@ pipeline {
     stages {
         stage('Checkout') {
             steps {
+                echo 'Checking out source code...'
                 checkout scm
                 // Verify project structure
                 sh '''
@@ -41,6 +42,7 @@ pipeline {
         }
 
         stage('Build Docker Images') {
+<<<<<<< HEAD
             parallel {
                 stage('Build Backend') {
                     steps {
@@ -92,6 +94,35 @@ pipeline {
                             '''
                         }
                     }
+=======
+            steps {
+                echo 'Building backend image...'
+                sh 'docker build -t reactweb1-backend ./backEnd'
+
+                echo 'Building frontend image...'
+                sh 'docker build -t reactweb1-frontend ./frontEnd'
+            }
+        }
+
+        stage('Tag Images for Docker Hub') {
+            steps {
+                echo 'Tagging images for Docker Hub...'
+                sh "docker tag reactweb1-backend ${BACKEND_IMAGE}"
+                sh "docker tag reactweb1-frontend ${FRONTEND_IMAGE}"
+            }
+        }
+
+        stage('Push Images to Docker Hub') {
+            steps {
+                echo 'Pushing images to Docker Hub...'
+                withCredentials([usernamePassword(credentialsId: "${DOCKERHUB_CREDS}", usernameVariable: 'DH_USER', passwordVariable: 'DH_PASS')]) {
+                    sh '''
+                        echo $DH_PASS | docker login -u $DH_USER --password-stdin
+                        docker push ${BACKEND_IMAGE}
+                        docker push ${FRONTEND_IMAGE}
+                        docker logout
+                    '''
+>>>>>>> d564bc38abe1fa48c15ae9924e9519ca5b2e53da
                 }
             }
         }
@@ -140,7 +171,11 @@ pipeline {
 
         stage('Prepare for Deployment') {
             steps {
+<<<<<<< HEAD
                 echo 'Setting up folders for docker-compose...'
+=======
+                echo 'Preparing folder structure for docker-compose...'
+>>>>>>> d564bc38abe1fa48c15ae9924e9519ca5b2e53da
                 sh '''
                     # Clean old folders
                     rm -rf backend frontend 2>/dev/null || true
@@ -170,6 +205,7 @@ pipeline {
 
         stage('Free Required Ports') {
             steps {
+<<<<<<< HEAD
                 script {
                     echo 'Cleaning up old containers on ports 5000, 5173, 27017...'
                     sh '''
@@ -191,11 +227,36 @@ pipeline {
                         docker system prune -f 2>/dev/null || true
                     '''
                 }
+=======
+                echo 'Cleaning up old containers and freeing ports...'
+                sh '''
+                    echo "Stopping old containers..."
+                    docker rm -f reactweb1_pipeline_backend_1 reactweb1_pipeline_frontend_1 reactweb1_pipeline_mongo_1 2>/dev/null || true
+                    docker rm -f reactweb1_backend_1 reactweb1_frontend_1 reactweb1_mongo_1 2>/dev/null || true
+
+                    echo "Killing Docker proxy processes holding ports 5000, 5173, 27017..."
+                    for port in 5000 5173 27017; do
+                        while pid=$(lsof -ti:$port || true); [ ! -z "$pid" ]; do
+                            cmd=$(ps -p $pid -o comm=)
+                            if [[ "$cmd" == "docker-proxy" || "$cmd" == "docker" ]]; then
+                                echo "Port $port used by Docker process $pid ($cmd). Killing..."
+                                sudo kill -9 $pid || true
+                                sleep 1
+                            else
+                                echo "WARNING: Port $port is used by system process $cmd. Aborting to avoid breaking host services."
+                                exit 1
+                            fi
+                        done
+                        echo "✅ Port $port is free"
+                    done
+                '''
+>>>>>>> d564bc38abe1fa48c15ae9924e9519ca5b2e53da
             }
         }
 
         stage('Deploy Containers') {
             steps {
+<<<<<<< HEAD
                 echo 'Starting deployment with Docker Compose...'
                 sh '''
                     echo "=== Current directory for docker-compose ==="
@@ -266,12 +327,20 @@ pipeline {
                         fi
                     '''
                 }
+=======
+                echo 'Deploying backend, frontend, and MongoDB using Docker Compose...'
+                sh '''
+                    docker-compose down -v --remove-orphans || true
+                    docker-compose up -d --build
+                '''
+>>>>>>> d564bc38abe1fa48c15ae9924e9519ca5b2e53da
             }
         }
     }
 
     post {
         always {
+<<<<<<< HEAD
             echo 'Pipeline cleanup and reporting...'
             sh '''
                 echo "=== Cleanup ==="
@@ -314,6 +383,15 @@ pipeline {
                 echo "To view logs: docker-compose logs -f"
                 echo "To stop:      docker-compose down"
                 echo "========================="
+=======
+            echo 'Cleaning up temporary folders and unused Docker resources...'
+            sh '''
+                rm -rf backend frontend || true
+                docker image prune -f
+                docker container prune -f
+                docker network prune -f
+                docker volume prune -f
+>>>>>>> d564bc38abe1fa48c15ae9924e9519ca5b2e53da
             '''
         }
         
