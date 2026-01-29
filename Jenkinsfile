@@ -32,6 +32,10 @@ pipeline {
                     echo "=== Testing Docker ==="
                     docker --version || echo "❌ Docker not installed"
                     docker ps > /dev/null 2>&1 && echo "✅ Docker daemon is running" || echo "❌ Cannot connect to Docker daemon"
+                    
+                    # Test network connectivity to Docker Hub
+                    echo "Testing Docker Hub connectivity..."
+                    timeout 10 curl -I https://hub.docker.com 2>/dev/null && echo "✅ Can reach Docker Hub" || echo "⚠️ Cannot reach Docker Hub"
                 '''
             }
         }
@@ -43,48 +47,173 @@ pipeline {
                     sh '''
                         cd backEnd
                         docker build --progress=plain --build-arg NPM_CONFIG_LOGLEVEL=warn -t reactweb1-backend .
+                        echo "✅ Backend image built: reactweb1-backend"
+                        docker images | grep reactweb1-backend
                     '''
                     
                     echo 'Building frontend image...'
                     sh '''
                         cd frontEnd
                         docker build --progress=plain --build-arg NPM_CONFIG_LOGLEVEL=warn -t reactweb1-frontend .
+                        echo "✅ Frontend image built: reactweb1-frontend"
+                        docker images | grep reactweb1-frontend
                     '''
                 }
             }
         }
 
-        stage('Tag Images for Docker Hub') {
+        stage('Verify and Tag Images') {
             steps {
                 sh '''
-                    echo "Tagging images..."
+                    echo "=== Verifying Images ==="
+                    
+                    # Check if images exist
+                    if ! docker image inspect reactweb1-backend > /dev/null 2>&1; then
+                        echo "❌ ERROR: Backend image 'reactweb1-backend' not found!"
+                        docker images
+                        exit 1
+                    fi
+                    
+                    if ! docker image inspect reactweb1-frontend > /dev/null 2>&1; then
+                        echo "❌ ERROR: Frontend image 'reactweb1-frontend' not found!"
+                        docker images
+                        exit 1
+                    fi
+                    
+                    echo "✅ Both images exist"
+                    
+                    echo "Tagging images for Docker Hub..."
                     docker tag reactweb1-backend ${BACKEND_IMAGE}
                     docker tag reactweb1-frontend ${FRONTEND_IMAGE}
+                    
+                    echo "✅ Images tagged:"
+                    echo "   - ${BACKEND_IMAGE}"
+                    echo "   - ${FRONTEND_IMAGE}"
+                    
+                    docker images | grep -E "(${DOCKERHUB_USER}|reactweb1)"
                 '''
             }
         }
 
         stage('Push Images to Docker Hub') {
             steps {
-                withCredentials([usernamePassword(
-                    credentialsId: "${DOCKERHUB_CREDS}",
-                    usernameVariable: 'DH_USER',
-                    passwordVariable: 'DH_PASS'
-                )]) {
+                script {
+                    echo "=== Pushing to Docker Hub ==="
+                    
+                    withCredentials([usernamePassword(
+                        credentialsId: "${DOCKERHUB_CREDS}",
+                        usernameVariable: 'DH_USER',
+                        passwordVariable: 'DH_PASS'
+                    )]) {
+                        // Try to push with retry logic
+                        retry(3) {
+                            sh '''
+                                echo "Attempting Docker Hub login for user: $DH_USER"
+                                
+                                # Login with detailed output
+                                if echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin; then
+                                    echo "✅ Docker Hub login successful"
+                                else
+                                    echo "❌ Docker Hub login failed"
+                                    echo "Debug: Checking credentials..."
+                                    echo "Username length: ${#DH_USER}"
+                                    echo "Password length: ${#DH_PASS}"
+                                    exit 1
+                                fi
+                                
+                                # Push backend with timeout
+                                echo "Pushing ${BACKEND_IMAGE}..."
+                                if timeout 300 docker push ${BACKEND_IMAGE}; then
+                                    echo "✅ Backend image pushed successfully"
+                                else
+                                    echo "❌ Backend push failed"
+                                    echo "Checking image details:"
+                                    docker image inspect ${BACKEND_IMAGE} --format='{{.RepoTags}}'
+                                    exit 1
+                                fi
+                                
+                                # Push frontend with timeout
+                                echo "Pushing ${FRONTEND_IMAGE}..."
+                                if timeout 300 docker push ${FRONTEND_IMAGE}; then
+                                    echo "✅ Frontend image pushed successfully"
+                                else
+                                    echo "❌ Frontend push failed"
+                                    exit 1
+                                fi
+                                
+                                docker logout
+                                echo "🎉 All images successfully pushed to Docker Hub!"
+                            '''
+                        }
+                    }
+                }
+            }
+            
+            post {
+                failure {
+                    echo "❌ Docker Hub push failed. Debug information:"
                     sh '''
-                        echo "Logging into Docker Hub..."
-                        echo $DH_PASS | docker login -u $DH_USER --password-stdin
-                        echo "Pushing backend image..."
-                        docker push ${BACKEND_IMAGE}
-                        echo "Pushing frontend image..."
-                        docker push ${FRONTEND_IMAGE}
-                        docker logout
+                        echo "=== Docker Images ==="
+                        docker images | grep -E "(${DOCKERHUB_USER}|reactweb1|devops)"
+                        
+                        echo "=== Docker Info ==="
+                        docker info 2>/dev/null | head -20
+                        
+                        echo "=== Network Test ==="
+                        curl -I https://hub.docker.com --connect-timeout 5 2>/dev/null || echo "Cannot reach Docker Hub"
                     '''
                 }
             }
         }
 
+        stage('Debug Docker Hub Issue') {
+            when {
+                expression { currentBuild.result == 'FAILURE' }
+            }
+            steps {
+                script {
+                    echo "=== Debugging Docker Hub Issue ==="
+                    
+                    withCredentials([usernamePassword(
+                        credentialsId: "${DOCKERHUB_CREDS}",
+                        usernameVariable: 'DH_USER',
+                        passwordVariable: 'DH_PASS'
+                    )]) {
+                        sh '''
+                            echo "Testing Docker Hub credentials manually..."
+                            echo "Username: $DH_USER"
+                            
+                            # Try API test
+                            echo "Testing Docker Hub API..."
+                            if curl -s -u "$DH_USER:$DH_PASS" https://hub.docker.com/v2/ > /dev/null 2>&1; then
+                                echo "✅ Docker Hub API accessible with credentials"
+                            else
+                                echo "❌ Cannot access Docker Hub API"
+                            fi
+                            
+                            # Check if image names are valid
+                            echo "Checking image names..."
+                            echo "Backend: ${BACKEND_IMAGE}"
+                            echo "Frontend: ${FRONTEND_IMAGE}"
+                            
+                            # Docker Hub requires lowercase
+                            if [[ "${BACKEND_IMAGE}" =~ [A-Z] ]]; then
+                                echo "⚠️ WARNING: Image name contains uppercase letters. Docker Hub requires lowercase."
+                            fi
+                            
+                            # Try manual push with verbose
+                            echo "Trying manual push with verbose output..."
+                            docker push ${BACKEND_IMAGE} 2>&1 | head -50
+                        '''
+                    }
+                }
+            }
+        }
+
         stage('Prepare for Deployment') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
             steps {
                 sh '''
                     echo "Preparing folder structure..."
@@ -113,6 +242,9 @@ pipeline {
         }
 
         stage('Free Required Ports') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
             steps {
                 sh '''
                     echo "Cleaning up old containers..."
@@ -133,6 +265,9 @@ pipeline {
         }
 
         stage('Deploy Containers') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
             steps {
                 sh '''
                     echo "Deploying with Docker Compose..."
@@ -147,6 +282,9 @@ pipeline {
         }
 
         stage('Verify Deployment') {
+            when {
+                expression { currentBuild.result == null || currentBuild.result == 'SUCCESS' }
+            }
             steps {
                 sh '''
                     echo "Verifying deployment..."
@@ -203,8 +341,14 @@ pipeline {
             echo '❌ Build failed!'
             sh '''
                 echo "Debug information:"
-                docker-compose logs --tail=50 2>/dev/null || true
+                echo "=== Docker Status ==="
                 docker ps -a 2>/dev/null || true
+                echo ""
+                echo "=== Docker Images ==="
+                docker images | head -20 2>/dev/null || true
+                echo ""
+                echo "=== Last Docker Compose Logs ==="
+                docker-compose logs --tail=30 2>/dev/null || echo "No docker-compose logs"
             '''
         }
     }
