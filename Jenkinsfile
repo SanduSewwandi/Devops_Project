@@ -3,25 +3,29 @@ pipeline {
 
     environment {
         DOCKERHUB_CREDS = 'plantcredentials'
-        DOCKERHUB_USER = 'sandusewwandi'
-        BACKEND_IMAGE = "${DOCKERHUB_USER}/devops_backend:latest"
+        DOCKERHUB_USER  = 'sandusewwandi'
+        BACKEND_IMAGE  = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE = "${DOCKERHUB_USER}/devops_frontend:latest"
         DOCKER_BUILDKIT = '1'
         NPM_CONFIG_LOGLEVEL = 'warn'
     }
 
     stages {
+
         stage('Checkout') {
             steps {
                 checkout scm
                 sh '''
+                    set -e
                     echo "=== Project Structure ==="
                     pwd
                     ls -la
+
                     echo "=== Checking Critical Files ==="
-                    test -f docker-compose.yml && echo "✅ docker-compose.yml exists" || echo "❌ docker-compose.yml missing"
-                    test -f backEnd/Dockerfile && echo "✅ backEnd/Dockerfile exists" || echo "❌ backEnd/Dockerfile missing"
-                    test -f frontEnd/Dockerfile && echo "✅ frontEnd/Dockerfile exists" || echo "❌ frontEnd/Dockerfile missing"
+                    test -f docker-compose.yml
+                    test -f backEnd/Dockerfile
+                    test -f frontEnd/Dockerfile
+                    echo "✅ All required files exist"
                 '''
             }
         }
@@ -29,36 +33,39 @@ pipeline {
         stage('Test Docker Setup') {
             steps {
                 sh '''
+                    set -e
                     echo "=== Testing Docker ==="
-                    docker --version || echo "❌ Docker not installed"
-                    docker ps > /dev/null 2>&1 && echo "✅ Docker daemon is running" || echo "❌ Cannot connect to Docker daemon"
+                    docker --version
+                    docker ps > /dev/null
+                    echo "✅ Docker is running"
                 '''
             }
         }
 
         stage('Build Docker Images') {
             steps {
-                script {
-                    echo 'Building backend image...'
-                    sh '''
-                        cd backEnd
-                        docker build --progress=plain --build-arg NPM_CONFIG_LOGLEVEL=warn -t reactweb1-backend .
-                    '''
-                    
-                    echo 'Building frontend image...'
-                    sh '''
-                        cd frontEnd
-                        docker build --progress=plain --build-arg NPM_CONFIG_LOGLEVEL=warn -t reactweb1-frontend .
-                    '''
-                }
+                sh '''
+                    set -e
+                    echo "Building backend image..."
+                    cd backEnd
+                    docker build --progress=plain -t reactweb1-backend .
+                '''
+
+                sh '''
+                    set -e
+                    echo "Building frontend image..."
+                    cd frontEnd
+                    docker build --progress=plain -t reactweb1-frontend .
+                '''
             }
         }
 
         stage('Tag Images for Docker Hub') {
             steps {
                 sh '''
+                    set -e
                     echo "Tagging images..."
-                    docker tag reactweb1-backend ${BACKEND_IMAGE}
+                    docker tag reactweb1-backend  ${BACKEND_IMAGE}
                     docker tag reactweb1-frontend ${FRONTEND_IMAGE}
                 '''
             }
@@ -72,13 +79,21 @@ pipeline {
                     passwordVariable: 'DH_PASS'
                 )]) {
                     sh '''
+                        set -e
                         echo "Logging into Docker Hub..."
-                        echo $DH_PASS | docker login -u $DH_USER --password-stdin
+                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
+
+                        echo "Verifying images exist..."
+                        docker images | grep devops
+
                         echo "Pushing backend image..."
                         docker push ${BACKEND_IMAGE}
+
                         echo "Pushing frontend image..."
                         docker push ${FRONTEND_IMAGE}
+
                         docker logout
+                        echo "✅ Images pushed successfully"
                     '''
                 }
             }
@@ -87,27 +102,12 @@ pipeline {
         stage('Prepare for Deployment') {
             steps {
                 sh '''
-                    echo "Preparing folder structure..."
-                    rm -rf backend frontend 2>/dev/null || true
-                    
-                    if [ -d "backEnd" ]; then
-                        cp -r backEnd backend
-                        echo "✅ Copied backEnd to backend"
-                    else
-                        echo "❌ backEnd directory not found"
-                        exit 1
-                    fi
-                    
-                    if [ -d "frontEnd" ]; then
-                        cp -r frontEnd frontend
-                        echo "✅ Copied frontEnd to frontend"
-                    else
-                        echo "❌ frontEnd directory not found"
-                        exit 1
-                    fi
-                    
-                    echo "Current directory:"
-                    ls -la
+                    set -e
+                    echo "Preparing folders..."
+                    rm -rf backend frontend || true
+                    cp -r backEnd backend
+                    cp -r frontEnd frontend
+                    echo "✅ Folder preparation done"
                 '''
             }
         }
@@ -115,19 +115,10 @@ pipeline {
         stage('Free Required Ports') {
             steps {
                 sh '''
-                    echo "Cleaning up old containers..."
-                    docker rm -f reactweb1_pipeline_backend_1 reactweb1_pipeline_frontend_1 reactweb1_pipeline_mongo_1 2>/dev/null || true
-                    docker rm -f reactweb1_backend_1 reactweb1_frontend_1 reactweb1_mongo_1 2>/dev/null || true
-
-                    echo "Checking ports 5000, 5173, 27017..."
-                    for port in 5000 5173 27017; do
-                        container_ids=$(docker ps -q --filter "publish=$port")
-                        if [ ! -z "$container_ids" ]; then
-                            echo "Stopping container using port $port: $container_ids"
-                            docker rm -f $container_ids 2>/dev/null || true
-                        fi
-                        echo "✅ Port $port is free"
-                    done
+                    set -e
+                    echo "Stopping old containers..."
+                    docker rm -f $(docker ps -aq) 2>/dev/null || true
+                    echo "✅ Containers cleaned"
                 '''
             }
         }
@@ -135,11 +126,10 @@ pipeline {
         stage('Deploy Containers') {
             steps {
                 sh '''
-                    echo "Deploying with Docker Compose..."
-                    docker-compose down -v --remove-orphans 2>/dev/null || true
-                    docker-compose up -d --build
-                    
-                    echo "Waiting for services to start..."
+                    set -e
+                    echo "Deploying containers..."
+                    docker-compose down -v --remove-orphans || true
+                    docker-compose up -d
                     sleep 15
                     docker-compose ps
                 '''
@@ -149,25 +139,21 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 sh '''
-                    echo "Verifying deployment..."
+                    set -e
+                    echo "Verifying containers..."
                     total=$(docker-compose ps -q | wc -l)
-                    running=$(docker-compose ps -q | xargs docker inspect -f '{{.State.Status}}' 2>/dev/null | grep -c "running" || echo "0")
-                    
-                    echo "Running containers: $running/$total"
-                    
-                    if [ "$running" -eq "$total" ] && [ "$total" -gt 0 ]; then
-                        echo "✅ DEPLOYMENT SUCCESSFUL!"
-                        echo ""
-                        echo "Service URLs:"
-                        echo "- Backend API: http://localhost:5000"
-                        echo "- Frontend App: http://localhost:5173"
-                        echo "- MongoDB: mongodb://localhost:27017"
-                    else
-                        echo "❌ DEPLOYMENT FAILED"
-                        docker-compose ps
-                        docker-compose logs --tail=20
+                    running=$(docker-compose ps -q | xargs docker inspect -f '{{.State.Status}}' | grep -c running)
+
+                    echo "Running: $running / $total"
+
+                    if [ "$running" -ne "$total" ]; then
+                        docker-compose logs --tail=50
                         exit 1
                     fi
+
+                    echo "✅ DEPLOYMENT SUCCESSFUL"
+                    echo "Backend:  http://localhost:5000"
+                    echo "Frontend: http://localhost:5173"
                 '''
             }
         }
@@ -176,35 +162,26 @@ pipeline {
     post {
         always {
             sh '''
-                echo "=== Cleanup ==="
-                rm -rf backend frontend 2>/dev/null || true
-                docker system prune -f 2>/dev/null || true
-                echo "Build completed at: $(date)"
+                echo "=== Post cleanup ==="
+                rm -rf backend frontend || true
+                docker image prune -f || true
             '''
-            
-            script {
-                def duration = currentBuild.duration
-                def minutes = duration.intdiv(60000)
-                def seconds = ((duration % 60000) / 1000).toInteger()
-                
-                echo "==========================================="
-                echo "Build Result: ${currentBuild.currentResult}"
-                echo "Build Duration: ${minutes}m ${seconds}s"
-                echo "Build URL: ${env.BUILD_URL}"
-                echo "==========================================="
-            }
+
+            echo "==========================================="
+            echo "Build Result  : ${currentBuild.currentResult}"
+            echo "Build URL     : ${env.BUILD_URL}"
+            echo "==========================================="
         }
-        
+
         success {
-            echo '✅ Build and deployment completed successfully!'
+            echo "🎉 PIPELINE COMPLETED SUCCESSFULLY"
         }
-        
+
         failure {
-            echo '❌ Build failed!'
+            echo "❌ PIPELINE FAILED"
             sh '''
-                echo "Debug information:"
-                docker-compose logs --tail=50 2>/dev/null || true
-                docker ps -a 2>/dev/null || true
+                docker ps -a || true
+                docker-compose logs --tail=50 || true
             '''
         }
     }
