@@ -1,0 +1,63 @@
+# Node.js specific
+node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist
+build
+.parcel-cache
+.next
+.cache
+.out
+
+# Environment files
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+
+# Logs
+*.log
+logs
+
+# IDE and editor files
+.vscode
+.idea
+*.swp
+*.swo
+*~
+
+# Version control
+.git
+.gitignore
+.gitattributes
+
+# Documentation
+*.md
+CHANGELOG.md
+README.md
+
+# Docker files
+Dockerfile
+.dockerignore
+docker-compose*.yml
+
+# Tests and coverage
+coverage
+.nyc_output
+test
+tests
+__tests__
+*.spec.js
+*.test.js
+*.spec.ts
+*.test.ts
+
+# Temporary files
+tmp
+temp
+*.tmp
+*.temp
