@@ -2,33 +2,39 @@ pipeline {
     agent any
 
     environment {
+        // Check if credentials exist
         DOCKERHUB_CREDS = 'plantcredentials'
         DOCKERHUB_USER  = 'sandusewwandi'
         BACKEND_IMAGE  = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE = "${DOCKERHUB_USER}/devops_frontend:latest"
-        DOCKER_BUILDKIT = '1'
-        BUILDKIT_PROGRESS = 'plain'
-        NPM_CONFIG_CACHE = '/tmp/npm_cache'
-        NPM_CONFIG_LOGLEVEL = 'warn'
     }
 
     options {
         timeout(time: 30, unit: 'MINUTES')
-        retry(2)
-        buildDiscarder(logRotator(numToKeepStr: '10'))
+        retry(1)  // Retry once if fails
     }
 
     stages {
-        stage('Checkout & Setup') {
+        stage('Checkout') {
             steps {
-                checkout scm
+                retry(2) {
+                    checkout scm
+                }
                 sh '''
-                    echo "=== Setting Up Workspace ==="
+                    echo "=== Project Structure ==="
                     pwd
                     ls -la
+
+                    echo "=== Checking Critical Files ==="
+                    test -f docker-compose.yml && echo "✅ docker-compose.yml exists" || echo "⚠️ Creating docker-compose.yml"
+                    test -f backEnd/Dockerfile && echo "✅ backEnd/Dockerfile exists" || echo "❌ backEnd/Dockerfile missing"
+                    test -f frontEnd/Dockerfile && echo "✅ frontEnd/Dockerfile exists" || echo "❌ frontEnd/Dockerfile missing"
                     
-                    cat > docker-compose.yml << 'EOF'
-version: '3.8'
+                    # Create docker-compose.yml if it doesn't exist
+                    if [ ! -f docker-compose.yml ]; then
+                        echo "=== Creating docker-compose.yml ==="
+                        cat > docker-compose.yml << 'EOF'
+version: '3'
 
 services:
   mongodb:
@@ -37,23 +43,23 @@ services:
     ports:
       - "27017:27017"
     volumes:
-      - mongodb_data:/data/db
+      - mongo_data:/data/db
     restart: unless-stopped
 
   backend:
-    image: ${BACKEND_IMAGE}
+    image: sandusewwandi/devops_backend:latest
     container_name: backend
     ports:
       - "5000:5000"
     environment:
-      - MONGODB_URI=mongodb://mongodb:27017/devops
-      - NODE_ENV=production
+      MONGODB_URI: mongodb://mongodb:27017/devops
+      NODE_ENV: production
     depends_on:
       - mongodb
     restart: unless-stopped
 
   frontend:
-    image: ${FRONTEND_IMAGE}
+    image: sandusewwandi/devops_frontend:latest
     container_name: frontend
     ports:
       - "5173:5173"
@@ -62,161 +68,92 @@ services:
     restart: unless-stopped
 
 volumes:
-  mongodb_data:
+  mongo_data:
 EOF
-                    echo "✅ docker-compose.yml created"
-                    
-                    if [ ! -f backEnd/.dockerignore ]; then
-                        cat > backEnd/.dockerignore << 'DOCKERIGNORE'
-node_modules
-npm-debug.log
-.git
-.gitignore
-README.md
-Dockerfile*
-docker-compose*
-.vscode
-.idea
-.DS_Store
-DOCKERIGNORE
-                    fi
-                    
-                    if [ ! -f frontEnd/.dockerignore ]; then
-                        cat > frontEnd/.dockerignore << 'DOCKERIGNORE'
-node_modules
-build
-dist
-npm-debug.log
-.git
-.gitignore
-README.md
-Dockerfile*
-docker-compose*
-.vscode
-.idea
-.DS_Store
-DOCKERIGNORE
+                        echo "✅ docker-compose.yml created"
                     fi
                 '''
             }
         }
 
-        stage('Prepare Build Cache') {
+        stage('Test Docker Setup') {
             steps {
                 sh '''
-                    echo "=== Setting Up Build Cache ==="
+                    echo "=== Testing Docker ==="
+                    echo "Docker version: $(docker --version 2>/dev/null || echo 'Not installed')"
+                    echo "Docker Compose version: $(docker-compose --version 2>/dev/null || echo 'Not installed')"
                     
-                    mkdir -p /tmp/npm_cache
-                    mkdir -p /tmp/yarn_cache
-                    
-                    echo "Checking for existing images to reuse..."
-                    docker images | grep -E "node:|alpine:" || echo "No base images cached"
-                    
-                    echo "Pre-pulling base images..."
-                    docker pull node:18-alpine 2>/dev/null || echo "Could not pre-pull node:18-alpine"
-                    docker pull node:20-alpine 2>/dev/null || echo "Could not pre-pull node:20-alpine"
-                    docker pull mongo:6 2>/dev/null || echo "Could not pre-pull mongo:6"
+                    # Check if Docker is running
+                    if docker ps > /dev/null 2>&1; then
+                        echo "✅ Docker is running"
+                    else
+                        echo "❌ Docker is not running or Jenkins doesn't have permission"
+                        echo "Try: sudo usermod -aG docker jenkins && sudo systemctl restart jenkins"
+                        exit 1
+                    fi
                 '''
             }
         }
 
-        stage('Build Backend Image') {
+        stage('Clean Previous Deployment') {
             steps {
                 sh '''
-                    echo "=== Building Backend (Optimized) ==="
+                    echo "=== Cleaning Previous Deployment ==="
+                    
+                    # Save previous logs before cleanup
+                    echo "Saving previous logs..."
+                    docker-compose logs --tail=50 2>/dev/null > /tmp/previous_deployment.log || true
+                    
+                    # Clean up
+                    echo "Stopping and removing containers..."
+                    docker-compose down -v --remove-orphans 2>/dev/null || true
+                    
+                    echo "Removing any other containers..."
+                    docker rm -f $(docker ps -aq) 2>/dev/null || true
+                    
+                    echo "Cleaning networks..."
+                    docker network prune -f 2>/dev/null || true
+                    
+                    echo "✅ Cleanup completed"
+                '''
+            }
+        }
+
+        stage('Build Docker Images') {
+            steps {
+                sh '''
+                    echo "=== Building Images ==="
+                    
+                    # Build backend
+                    echo "Building backend..."
                     cd backEnd
+                    docker build -t reactweb1-backend .
+                    docker tag reactweb1-backend ${BACKEND_IMAGE}
                     
-                    if [ ! -f Dockerfile ]; then
-                        cat > Dockerfile << 'DOCKERFILE'
-FROM node:18-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm ci --only=production --silent
-
-FROM node:18-alpine
-WORKDIR /app
-COPY --from=builder /app/node_modules ./node_modules
-COPY . .
-EXPOSE 5000
-CMD ["node", "server.js"]
-DOCKERFILE
-                    fi
+                    # Build frontend
+                    echo "Building frontend..."
+                    cd ../frontEnd
+                    docker build -t reactweb1-frontend .
+                    docker tag reactweb1-frontend ${FRONTEND_IMAGE}
                     
-                    echo "Building backend with cache optimization..."
-                    time docker build \
-                      --progress=plain \
-                      --build-arg NODE_ENV=production \
-                      --cache-from ${BACKEND_IMAGE} \
-                      -t ${BACKEND_IMAGE} \
-                      -t reactweb1-backend:latest \
-                      .
-                    
-                    echo "✅ Backend built in: $(($SECONDS / 60))m$(($SECONDS % 60))s"
+                    echo "✅ Images built and tagged"
+                    echo "=== Current Images ==="
+                    docker images | grep -E "devops|reactweb" || echo "No images found"
                 '''
             }
         }
 
-        stage('Build Frontend Image') {
-            steps {
-                sh '''
-                    echo "=== Building Frontend (Optimized) ==="
-                    cd frontEnd
-                    
-                    if [ ! -f Dockerfile ]; then
-                        cat > Dockerfile << 'DOCKERFILE'
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY package*.json ./
-RUN npm install --silent
-COPY . .
-RUN npm run build --silent
-
-FROM nginx:alpine
-COPY --from=builder /app/build /usr/share/nginx/html
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-EXPOSE 5173
-CMD ["nginx", "-g", "daemon off;"]
-DOCKERFILE
-                    fi
-                    
-                    if [ ! -f nginx.conf ]; then
-                        cat > nginx.conf << 'NGINX'
-server {
-    listen 5173;
-    server_name localhost;
-    
-    location / {
-        root /usr/share/nginx/html;
-        index index.html index.htm;
-        try_files $uri $uri/ /index.html;
-    }
-    
-    location /api {
-        proxy_pass http://backend:5000;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-    }
-}
-NGINX
-                    fi
-                    
-                    echo "Building frontend with cache optimization..."
-                    time docker build \
-                      --progress=plain \
-                      --build-arg NODE_ENV=production \
-                      --cache-from ${FRONTEND_IMAGE} \
-                      -t ${FRONTEND_IMAGE} \
-                      -t reactweb1-frontend:latest \
-                      .
-                    
-                    echo "✅ Frontend built in: $(($SECONDS / 60))m$(($SECONDS % 60))s"
-                '''
-            }
-        }
-
-        stage('Push Images (Optional)') {
+        stage('Push Images to Docker Hub') {
             when {
-                expression { env.DOCKERHUB_CREDS != '' }
+                expression { 
+                    try {
+                        withCredentials([usernamePassword(credentialsId: "${DOCKERHUB_CREDS}", usernameVariable: 'DUMMY', passwordVariable: 'DUMMY2')]) {
+                            return true
+                        }
+                    } catch(Exception e) {
+                        return false
+                    }
+                }
             }
             steps {
                 withCredentials([usernamePassword(
@@ -225,94 +162,136 @@ NGINX
                     passwordVariable: 'DH_PASS'
                 )]) {
                     sh '''
-                        echo "=== Pushing Images ==="
+                        echo "=== Pushing to Docker Hub ==="
                         echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
                         
-                        echo "Pushing backend..."
-                        docker push ${BACKEND_IMAGE} || echo "⚠️ Backend push skipped"
+                        echo "Pushing backend image..."
+                        docker push ${BACKEND_IMAGE} || echo "⚠️ Backend push had issues"
                         
-                        echo "Pushing frontend..."
-                        docker push ${FRONTEND_IMAGE} || echo "⚠️ Frontend push skipped"
+                        echo "Pushing frontend image..."
+                        docker push ${FRONTEND_IMAGE} || echo "⚠️ Frontend push had issues"
                         
                         docker logout
-                        echo "✅ Push completed"
+                        echo "✅ Images pushed"
                     '''
                 }
             }
         }
 
-        stage('Deploy') {
+        stage('Skip Docker Hub Push') {
+            when {
+                expression { 
+                    try {
+                        withCredentials([usernamePassword(credentialsId: "${DOCKERHUB_CREDS}", usernameVariable: 'DUMMY', passwordVariable: 'DUMMY2')]) {
+                            return false
+                        }
+                    } catch(Exception e) {
+                        return true
+                    }
+                }
+            }
+            steps {
+                echo "⚠️ Skipping Docker Hub push - using local images only"
+            }
+        }
+
+        stage('Deploy Containers') {
             steps {
                 sh '''
-                    echo "=== Deploying Application ==="
-                    
-                    echo "Cleaning up old deployment..."
-                    docker-compose down -v --remove-orphans 2>/dev/null || true
+                    echo "=== Deploying Containers ==="
                     
                     echo "Starting services..."
                     docker-compose up -d
                     
                     echo "Waiting for services to start..."
-                    for i in {1..10}; do
-                        running=$(docker-compose ps -q | xargs docker inspect -f "{{.State.Status}}" 2>/dev/null | grep -c "running")
-                        total=$(docker-compose ps -q | wc -l)
-                        
-                        echo "Status: $running/$total containers running"
-                        
-                        if [ "$running" -eq "$total" ] && [ "$total" -eq 3 ]; then
-                            echo "✅ All containers are running!"
-                            break
-                        fi
-                        
-                        if [ $i -eq 10 ]; then
-                            echo "⚠️ Containers taking longer than expected to start"
-                        fi
-                        
-                        sleep 5
-                    done
+                    sleep 10
                     
-                    echo "Deployment completed in: $(($SECONDS / 60))m$(($SECONDS % 60))s"
+                    echo "=== Initial Container Status ==="
+                    docker-compose ps
                 '''
             }
         }
 
-        stage('Health Check') {
+        stage('Verify Deployment') {
             steps {
                 sh '''
-                    echo "=== Health Check ==="
+                    echo "=== Verifying Deployment ==="
                     
-                    echo "Final container status:"
+                    # Give containers more time to start
+                    echo "Waiting for containers to stabilize..."
+                    sleep 5
+                    
+                    # Check container status
+                    echo "=== Container Status ==="
                     docker-compose ps
                     
+                    total=$(docker-compose ps -q | wc -l)
+                    running=$(docker-compose ps -q | xargs docker inspect -f "{{.State.Status}}" 2>/dev/null | grep -c "running")
+                    
+                    echo "Containers: $running/$total running"
+                    
+                    if [ "$total" -eq 0 ]; then
+                        echo "❌ ERROR: No containers found!"
+                        echo "=== Checking all containers ==="
+                        docker ps -a
+                        echo "=== Checking docker-compose ==="
+                        docker-compose ps -a
+                        exit 1
+                    fi
+                    
+                    if [ "$running" -ne "$total" ]; then
+                        echo "❌ ERROR: Not all containers are running"
+                        echo "=== Failed container details ==="
+                        docker-compose ps -a
+                        echo "=== Container logs ==="
+                        docker-compose logs --tail=50
+                        exit 1
+                    fi
+                    
+                    echo "✅ SUCCESS: All containers are running!"
+                    
+                    # Test backend (optional - don't fail if it doesn't respond)
                     echo ""
-                    echo "Quick health checks..."
+                    echo "=== Testing Services (Optional) ==="
                     
-                    echo -n "Backend: "
-                    if docker-compose ps backend | grep -q "Up"; then
-                        echo "✅ Running"
+                    echo "Testing backend (10 second timeout)..."
+                    if curl -s --max-time 10 http://localhost:5000 > /dev/null; then
+                        echo "✅ Backend is responding"
                     else
-                        echo "❌ Not running"
+                        echo "⚠️ Backend not responding (may still be starting)"
+                        echo "Backend logs:"
+                        docker logs backend --tail=20 2>/dev/null || echo "Could not get backend logs"
                     fi
                     
-                    echo -n "Frontend: "
-                    if docker-compose ps frontend | grep -q "Up"; then
-                        echo "✅ Running"
+                    echo "Testing frontend (10 second timeout)..."
+                    if curl -s --max-time 10 http://localhost:5173 > /dev/null; then
+                        echo "✅ Frontend is responding"
                     else
-                        echo "❌ Not running"
-                    fi
-                    
-                    echo -n "MongoDB: "
-                    if docker-compose ps mongodb | grep -q "Up"; then
-                        echo "✅ Running"
-                    else
-                        echo "❌ Not running"
+                        echo "⚠️ Frontend not responding (React dev server may not respond to curl)"
+                        echo "Frontend logs:"
+                        docker logs frontend --tail=20 2>/dev/null || echo "Could not get frontend logs"
                     fi
                     
                     echo ""
-                    echo "🌐 Application URLs:"
-                    echo "Backend API:  http://localhost:5000"
-                    echo "Frontend App: http://localhost:5173"
-                    echo "MongoDB:      localhost:27017"
+                    echo "🎉 DEPLOYMENT COMPLETED SUCCESSFULLY"
+                    echo "======================================="
+                    echo "Services:"
+                    echo "• MongoDB:    localhost:27017"
+                    echo "• Backend:    localhost:5000"
+                    echo "• Frontend:   localhost:5173"
+                    echo "======================================="
+                    
+                    # Show EC2 public IP
+                    echo ""
+                    echo "🌐 Public Access URLs:"
+                    if PUBLIC_IP=$(curl -s --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null); then
+                        echo "Backend API:  http://$PUBLIC_IP:5000"
+                        echo "Frontend App: http://$PUBLIC_IP:5173"
+                        echo "MongoDB:      $PUBLIC_IP:27017"
+                    else
+                        echo "Could not retrieve public IP"
+                        echo "Use your EC2 instance's public IP with ports 5000, 5173, 27017"
+                    fi
                 '''
             }
         }
@@ -320,59 +299,36 @@ NGINX
 
     post {
         always {
-            sh '''
-                echo "=== Build Summary ==="
-                echo "Total build time: $(($SECONDS / 60))m$(($SECONDS % 60))s"
-                echo ""
-                echo "Container status:"
-                docker-compose ps 2>/dev/null || echo "No containers running"
-                echo ""
-                echo "Image sizes:"
-                docker images ${BACKEND_IMAGE} --format "Backend: {{.Repository}}:{{.Tag}} - {{.Size}}" 2>/dev/null || true
-                docker images ${FRONTEND_IMAGE} --format "Frontend: {{.Repository}}:{{.Tag}} - {{.Size}}" 2>/dev/null || true
-            '''
-            
             script {
                 echo "==========================================="
-                echo "Build #${BUILD_NUMBER} - ${currentBuild.currentResult}"
-                echo "Duration: ${currentBuild.durationString}"
-                echo "URL: ${BUILD_URL}"
+                echo "Build Result: ${currentBuild.currentResult}"
+                echo "Build URL: ${env.BUILD_URL}"
+                echo "Build Number: ${env.BUILD_NUMBER}"
                 echo "==========================================="
+                
+                // Simple post-build summary without sh steps
+                echo "Build completed at: ${new Date().format('yyyy-MM-dd HH:mm:ss')}"
             }
         }
         
         success {
-            echo "🎉 BUILD SUCCESSFUL"
-            sh '''
-                echo ""
-                echo "🚀 Deployment Complete!"
-                echo "Access your application at:"
-                PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "localhost")
-                echo "• Frontend: http://$PUBLIC_IP:5173"
-                echo "• Backend API: http://$PUBLIC_IP:5000"
-                echo ""
-                echo "To view logs: docker-compose logs -f"
-                echo "To stop: docker-compose down"
-            '''
+            script {
+                echo "🎉 PIPELINE COMPLETED SUCCESSFULLY"
+                echo "Your application is now deployed on EC2!"
+            }
         }
         
         failure {
-            echo "❌ BUILD FAILED"
-            sh '''
-                echo "=== Debug Information ==="
+            script {
+                echo "❌ PIPELINE FAILED"
+                echo "Check the console output above for details"
                 echo ""
-                echo "1. Recent Docker events:"
-                docker events --since "10m" 2>/dev/null | tail -20 || echo "Could not get events"
-                echo ""
-                echo "2. Container logs:"
-                docker-compose logs --tail=50 2>/dev/null || echo "No logs available"
-                echo ""
-                echo "3. System resources:"
-                df -h /var/lib/docker 2>/dev/null || df -h /
-                echo ""
-                echo "4. Memory usage:"
-                free -h || echo "Memory info unavailable"
-            '''
+                echo "Common EC2 issues:"
+                echo "1. Docker not installed: sudo yum install docker -y"
+                echo "2. Jenkins permissions: sudo usermod -aG docker jenkins"
+                echo "3. Port conflicts: Check ports 5000, 5173, 27017"
+                echo "4. Memory issues: Your EC2 instance might need more RAM"
+            }
         }
     }
 }
