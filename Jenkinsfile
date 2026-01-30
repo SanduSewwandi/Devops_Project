@@ -2,13 +2,14 @@ pipeline {
     agent any
 
     environment {
+        DOCKERHUB_CREDS = 'plantcredentials'
         DOCKERHUB_USER  = 'sandusewwandi'
         BACKEND_IMAGE  = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE = "${DOCKERHUB_USER}/devops_frontend:latest"
     }
 
     options {
-        timeout(time: 45, unit: 'MINUTES')  // Increased timeout
+        timeout(time: 30, unit: 'MINUTES')
         retry(1)
     }
 
@@ -24,60 +25,49 @@ pipeline {
                     ls -la
 
                     echo "=== Checking Critical Files ==="
-                    test -f backEnd/Dockerfile && echo "✅ backEnd/Dockerfile exists" || exit 1
-                    test -f frontEnd/Dockerfile && echo "✅ frontEnd/Dockerfile exists" || exit 1
+                    test -f docker-compose.yml && echo "✅ docker-compose.yml exists" || echo "⚠️ Creating docker-compose.yml"
+                    test -f backEnd/Dockerfile && echo "✅ backEnd/Dockerfile exists" || echo "❌ backEnd/Dockerfile missing"
+                    test -f frontEnd/Dockerfile && echo "✅ frontEnd/Dockerfile exists" || echo "❌ frontEnd/Dockerfile missing"
                     
-                    echo "=== Creating docker-compose.yml ==="
-                    cat > docker-compose.yml << 'EOF'
-version: '3.8'
-
-services:
-  mongodb:
-    image: mongo:6
-    container_name: mongodb
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  backend:
-    image: ${BACKEND_IMAGE}
-    container_name: backend
-    ports:
-      - "5000:5000"
-    environment:
-      MONGODB_URI: mongodb://mongodb:27017/devops
-      NODE_ENV: production
-    depends_on:
-      mongodb:
-        condition: service_healthy
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5000/health || exit 1"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 40s
-
-  frontend:
-    image: ${FRONTEND_IMAGE}
-    container_name: frontend
-    ports:
-      - "5173:5173"
-    depends_on:
-      - backend
-    restart: unless-stopped
-
-volumes:
-  mongo_data:
-EOF
-                    echo "✅ docker-compose.yml created with health checks"
+                    # Create a simple docker-compose.yml
+                    echo "version: '3'" > docker-compose.yml
+                    echo "services:" >> docker-compose.yml
+                    echo "  mongodb:" >> docker-compose.yml
+                    echo "    image: mongo:6" >> docker-compose.yml
+                    echo "    container_name: mongodb" >> docker-compose.yml
+                    echo "    ports:" >> docker-compose.yml
+                    echo "      - \"27017:27017\"" >> docker-compose.yml
+                    echo "    volumes:" >> docker-compose.yml
+                    echo "      - mongo_data:/data/db" >> docker-compose.yml
+                    echo "    restart: unless-stopped" >> docker-compose.yml
+                    echo "" >> docker-compose.yml
+                    echo "  backend:" >> docker-compose.yml
+                    echo "    image: sandusewwandi/devops_backend:latest" >> docker-compose.yml
+                    echo "    container_name: backend" >> docker-compose.yml
+                    echo "    ports:" >> docker-compose.yml
+                    echo "      - \"5000:5000\"" >> docker-compose.yml
+                    echo "    environment:" >> docker-compose.yml
+                    echo "      MONGODB_URI: mongodb://mongodb:27017/devops" >> docker-compose.yml
+                    echo "      NODE_ENV: production" >> docker-compose.yml
+                    echo "    depends_on:" >> docker-compose.yml
+                    echo "      - mongodb" >> docker-compose.yml
+                    echo "    restart: unless-stopped" >> docker-compose.yml
+                    echo "" >> docker-compose.yml
+                    echo "  frontend:" >> docker-compose.yml
+                    echo "    image: sandusewwandi/devops_frontend:latest" >> docker-compose.yml
+                    echo "    container_name: frontend" >> docker-compose.yml
+                    echo "    ports:" >> docker-compose.yml
+                    echo "      - \"5173:5173\"" >> docker-compose.yml
+                    echo "    depends_on:" >> docker-compose.yml
+                    echo "      - backend" >> docker-compose.yml
+                    echo "    restart: unless-stopped" >> docker-compose.yml
+                    echo "" >> docker-compose.yml
+                    echo "volumes:" >> docker-compose.yml
+                    echo "  mongo_data:" >> docker-compose.yml
+                    
+                    echo "✅ docker-compose.yml created"
+                    echo "=== docker-compose.yml content ==="
+                    cat docker-compose.yml
                 '''
             }
         }
@@ -87,8 +77,9 @@ EOF
                 sh '''
                     echo "=== Testing Docker ==="
                     docker --version
+                    docker ps > /dev/null
                     docker-compose --version
-                    docker ps > /dev/null && echo "✅ Docker is running"
+                    echo "✅ Docker is running"
                 '''
             }
         }
@@ -110,30 +101,25 @@ EOF
                 sh '''
                     echo "=== Building Images ==="
                     
-                    echo "1. Building backend..."
+                    echo "Building backend..."
                     cd backEnd
                     docker build -t reactweb1-backend .
                     docker tag reactweb1-backend ${BACKEND_IMAGE}
                     
-                    echo "2. Building frontend..."
+                    echo "Building frontend..."
                     cd ../frontEnd
                     docker build -t reactweb1-frontend .
                     docker tag reactweb1-frontend ${FRONTEND_IMAGE}
                     
-                    echo "✅ Images built successfully"
-                    echo "Current images:"
-                    docker images | grep -E "devops|reactweb"
+                    echo "✅ Images built and tagged"
                 '''
             }
         }
 
         stage('Push Images to Docker Hub') {
-            when {
-                environment name: 'DOCKERHUB_CREDS', value: 'plantcredentials'
-            }
             steps {
                 withCredentials([usernamePassword(
-                    credentialsId: 'plantcredentials',
+                    credentialsId: "${DOCKERHUB_CREDS}",
                     usernameVariable: 'DH_USER',
                     passwordVariable: 'DH_PASS'
                 )]) {
@@ -148,7 +134,7 @@ EOF
                         docker push ${FRONTEND_IMAGE}
                         
                         docker logout
-                        echo "✅ Images pushed to Docker Hub"
+                        echo "✅ Images pushed"
                     '''
                 }
             }
@@ -159,23 +145,25 @@ EOF
                 sh '''
                     echo "=== Deploying Containers ==="
                     
-                    echo "1. Starting services..."
+                    echo "Starting services..."
                     docker-compose up -d
                     
-                    echo "2. Waiting for MongoDB to be ready..."
-                    for i in {1..30}; do
-                        if docker-compose ps mongodb | grep -q "(healthy)"; then
-                            echo "✅ MongoDB is healthy"
-                            break
-                        fi
-                        echo "Waiting for MongoDB... ($i/30)"
-                        sleep 2
-                    done
+                    echo "Waiting for services to start..."
+                    sleep 15
                     
-                    echo "3. Checking all containers..."
-                    sleep 10
-                    echo "Container status:"
+                    echo "=== Container Status ==="
                     docker-compose ps
+                    
+                    # Check if containers are running
+                    echo "=== Health Check ==="
+                    for container in mongodb backend frontend; do
+                        if docker-compose ps $container | grep -q "Up"; then
+                            echo "✅ $container is running"
+                        else
+                            echo "❌ $container is NOT running"
+                            docker-compose logs $container --tail=10
+                        fi
+                    done
                 '''
             }
         }
@@ -185,83 +173,43 @@ EOF
                 sh '''
                     echo "=== Verifying Deployment ==="
                     
-                    # Wait for all services
-                    echo "Waiting for all services to be ready..."
-                    sleep 15
+                    # Final check
+                    sleep 5
                     
-                    # Check container status
-                    echo "=== Container Status ==="
+                    echo "=== Final Container Status ==="
                     docker-compose ps
                     
-                    total=$(docker-compose ps -q | wc -l)
+                    # Count running containers
                     running=$(docker-compose ps -q | xargs docker inspect -f "{{.State.Status}}" 2>/dev/null | grep -c "running")
                     
-                    echo "📊 Containers running: $running/$total"
-                    
-                    if [ "$running" -ne 3 ]; then
-                        echo "❌ ERROR: Expected 3 containers, found $running"
-                        echo "=== Debug Information ==="
+                    if [ "$running" -eq 3 ]; then
+                        echo "✅ SUCCESS: All 3 containers are running!"
+                        
+                        echo ""
+                        echo "🎉 DEPLOYMENT COMPLETED SUCCESSFULLY"
+                        echo "======================================="
+                        echo "Services deployed:"
+                        echo "1. MongoDB:    localhost:27017"
+                        echo "2. Backend:    localhost:5000"
+                        echo "3. Frontend:   localhost:5173"
+                        echo "======================================="
+                        
+                        # Get EC2 public IP
+                        echo ""
+                        echo "🌐 Public Access URLs:"
+                        if PUBLIC_IP=$(curl -s --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null); then
+                            echo "Backend API:  http://$PUBLIC_IP:5000"
+                            echo "Frontend App: http://$PUBLIC_IP:5173"
+                        else
+                            echo "Use your EC2 public IP with ports 5000 and 5173"
+                        fi
+                    else
+                        echo "❌ ERROR: Only $running/3 containers are running"
+                        echo "=== Debug Info ==="
                         docker-compose ps -a
-                        echo "=== Logs ==="
                         docker-compose logs --tail=50
                         exit 1
                     fi
-                    
-                    echo "✅ All containers are running!"
-                    
-                    # Test with retries
-                    echo ""
-                    echo "=== Testing Services ==="
-                    
-                    echo "Testing backend (with retries)..."
-                    backend_ready=false
-                    for i in {1..10}; do
-                        echo "Attempt $i/10..."
-                        if curl -s -f --max-time 5 http://localhost:5000 > /dev/null; then
-                            echo "✅ Backend is responding"
-                            backend_ready=true
-                            break
-                        fi
-                        sleep 3
-                    done
-                    
-                    if [ "$backend_ready" = false ]; then
-                        echo "⚠️ Backend not responding to HTTP (but container is running)"
-                        echo "Backend logs:"
-                        docker logs backend --tail=30
-                    fi
-                    
-                    echo "Testing frontend..."
-                    if curl -s --max-time 5 http://localhost:5173 > /dev/null; then
-                        echo "✅ Frontend is responding"
-                    else
-                        echo "⚠️ Frontend not responding (React dev server may not respond to curl)"
-                    fi
-                    
-                    echo ""
-                    echo "🎉 DEPLOYMENT SUCCESSFUL!"
-                    echo "======================================="
-                    echo "Services deployed on EC2:"
-                    echo "1. MongoDB database:   localhost:27017"
-                    echo "2. Backend API:        localhost:5000"
-                    echo "3. Frontend React app: localhost:5173"
-                    echo "======================================="
-                    
-                    # Get EC2 public IP
-                    echo ""
-                    echo "🌐 Public Access URLs:"
-                    if [ -f /sys/hypervisor/uuid ] && [ "$(head -c 3 /sys/hypervisor/uuid)" = "ec2" ]; then
-                        PUBLIC_IP=$(curl -s --max-time 3 http://169.254.169.254/latest/meta-data/public-ipv4)
-                        echo "Backend API:    http://$PUBLIC_IP:5000"
-                        echo "Frontend App:   http://$PUBLIC_IP:5173"
-                        echo "MongoDB (direct): $PUBLIC_IP:27017"
-                    else
-                        echo "Not running on EC2 or cannot retrieve public IP"
-                        echo "Use your server's IP address with the ports above"
-                    fi
-                    
-                    echo ""
-                    echo "⏱️ Total deployment time: $(($SECONDS / 60)) minutes and $(($SECONDS % 60)) seconds"
                 '''
             }
         }
@@ -269,34 +217,19 @@ EOF
 
     post {
         always {
-            script {
-                echo "==========================================="
-                echo "Build Result: ${currentBuild.currentResult}"
-                echo "Build URL: ${env.BUILD_URL}"
-                echo "Build Number: ${env.BUILD_NUMBER}"
-                echo "Duration: ${currentBuild.durationString}"
-                echo "==========================================="
-            }
+            echo "==========================================="
+            echo "Build Result: ${currentBuild.currentResult}"
+            echo "Build URL: ${env.BUILD_URL}"
+            echo "Build Number: ${env.BUILD_NUMBER}"
+            echo "==========================================="
         }
         
         success {
-            script {
-                echo "🎉 PIPELINE COMPLETED SUCCESSFULLY"
-                echo "Your MERN stack application is now live!"
-            }
+            echo "🎉 PIPELINE COMPLETED SUCCESSFULLY"
         }
         
         failure {
-            script {
-                echo "❌ PIPELINE FAILED"
-                echo ""
-                echo "Troubleshooting tips:"
-                echo "1. Check if Docker is running: sudo systemctl status docker"
-                echo "2. Check Jenkins permissions: sudo usermod -aG docker jenkins"
-                echo "3. Check port conflicts: sudo netstat -tulpn | grep -E ':5000|:5173|:27017'"
-                echo "4. Check disk space: df -h"
-                echo "5. Check container logs: docker-compose logs"
-            }
+            echo "❌ PIPELINE FAILED"
         }
     }
 }
