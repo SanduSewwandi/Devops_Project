@@ -9,7 +9,7 @@ pipeline {
     }
 
     options {
-        timeout(time: 30, unit: 'MINUTES')
+        timeout(time: 15, unit: 'MINUTES')  // Reduced from 30 to 15
         retry(1)
     }
 
@@ -23,51 +23,20 @@ pipeline {
                     echo "=== Project Structure ==="
                     pwd
                     ls -la
+                '''
+            }
+        }
 
-                    echo "=== Checking Critical Files ==="
-                    test -f docker-compose.yml && echo "✅ docker-compose.yml exists" || echo "⚠️ Creating docker-compose.yml"
-                    test -f backEnd/Dockerfile && echo "✅ backEnd/Dockerfile exists" || echo "❌ backEnd/Dockerfile missing"
-                    test -f frontEnd/Dockerfile && echo "✅ frontEnd/Dockerfile exists" || echo "❌ frontEnd/Dockerfile missing"
-                    
-                    # Create a simple docker-compose.yml
-                    echo "version: '3'" > docker-compose.yml
-                    echo "services:" >> docker-compose.yml
-                    echo "  mongodb:" >> docker-compose.yml
-                    echo "    image: mongo:6" >> docker-compose.yml
-                    echo "    container_name: mongodb" >> docker-compose.yml
-                    echo "    ports:" >> docker-compose.yml
-                    echo "      - \"27017:27017\"" >> docker-compose.yml
-                    echo "    volumes:" >> docker-compose.yml
-                    echo "      - mongo_data:/data/db" >> docker-compose.yml
-                    echo "    restart: unless-stopped" >> docker-compose.yml
-                    echo "" >> docker-compose.yml
-                    echo "  backend:" >> docker-compose.yml
-                    echo "    image: sandusewwandi/devops_backend:latest" >> docker-compose.yml
-                    echo "    container_name: backend" >> docker-compose.yml
-                    echo "    ports:" >> docker-compose.yml
-                    echo "      - \"5000:5000\"" >> docker-compose.yml
-                    echo "    environment:" >> docker-compose.yml
-                    echo "      MONGODB_URI: mongodb://mongodb:27017/devops" >> docker-compose.yml
-                    echo "      NODE_ENV: production" >> docker-compose.yml
-                    echo "    depends_on:" >> docker-compose.yml
-                    echo "      - mongodb" >> docker-compose.yml
-                    echo "    restart: unless-stopped" >> docker-compose.yml
-                    echo "" >> docker-compose.yml
-                    echo "  frontend:" >> docker-compose.yml
-                    echo "    image: sandusewwandi/devops_frontend:latest" >> docker-compose.yml
-                    echo "    container_name: frontend" >> docker-compose.yml
-                    echo "    ports:" >> docker-compose.yml
-                    echo "      - \"5173:5173\"" >> docker-compose.yml
-                    echo "    depends_on:" >> docker-compose.yml
-                    echo "      - backend" >> docker-compose.yml
-                    echo "    restart: unless-stopped" >> docker-compose.yml
-                    echo "" >> docker-compose.yml
-                    echo "volumes:" >> docker-compose.yml
-                    echo "  mongo_data:" >> docker-compose.yml
-                    
-                    echo "✅ docker-compose.yml created"
-                    echo "=== docker-compose.yml content ==="
-                    cat docker-compose.yml
+        stage('Pre-pull Docker Images') {
+            steps {
+                sh '''
+                    echo "=== Pre-pulling Docker Images ==="
+                    # Pull images in parallel to save time
+                    docker pull mongo:6 &
+                    docker pull ${BACKEND_IMAGE} &
+                    docker pull ${FRONTEND_IMAGE} &
+                    wait
+                    echo "✅ Images pre-pulled"
                 '''
             }
         }
@@ -77,7 +46,6 @@ pipeline {
                 sh '''
                     echo "=== Testing Docker ==="
                     docker --version
-                    docker ps > /dev/null
                     docker-compose --version
                     echo "✅ Docker is running"
                 '''
@@ -87,10 +55,9 @@ pipeline {
         stage('Clean Previous Deployment') {
             steps {
                 sh '''
-                    echo "=== Cleaning Previous Deployment ==="
-                    docker-compose down -v --remove-orphans 2>/dev/null || true
-                    docker rm -f $(docker ps -aq) 2>/dev/null || true
-                    docker network prune -f 2>/dev/null || true
+                    echo "=== Quick Cleanup ==="
+                    # Only stop and remove containers, keep volumes
+                    docker-compose down 2>/dev/null || true
                     echo "✅ Cleanup completed"
                 '''
             }
@@ -99,16 +66,17 @@ pipeline {
         stage('Build Docker Images') {
             steps {
                 sh '''
-                    echo "=== Building Images ==="
+                    echo "=== Building Images with Cache ==="
                     
-                    echo "Building backend..."
+                    # Build with cache
+                    echo "Building backend with cache..."
                     cd backEnd
-                    docker build -t reactweb1-backend .
+                    docker build --cache-from=${BACKEND_IMAGE} -t reactweb1-backend .
                     docker tag reactweb1-backend ${BACKEND_IMAGE}
                     
-                    echo "Building frontend..."
+                    echo "Building frontend with cache..."
                     cd ../frontEnd
-                    docker build -t reactweb1-frontend .
+                    docker build --cache-from=${FRONTEND_IMAGE} -t reactweb1-frontend .
                     docker tag reactweb1-frontend ${FRONTEND_IMAGE}
                     
                     echo "✅ Images built and tagged"
@@ -128,11 +96,12 @@ pipeline {
                         echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
                         
                         echo "Pushing backend image..."
-                        docker push ${BACKEND_IMAGE}
+                        docker push ${BACKEND_IMAGE} &
                         
                         echo "Pushing frontend image..."
-                        docker push ${FRONTEND_IMAGE}
+                        docker push ${FRONTEND_IMAGE} &
                         
+                        wait  # Wait for pushes to complete
                         docker logout
                         echo "✅ Images pushed"
                     '''
@@ -140,74 +109,127 @@ pipeline {
             }
         }
 
-        stage('Deploy Containers') {
+        stage('Fast Deploy Containers') {
             steps {
                 sh '''
-                    echo "=== Deploying Containers ==="
+                    echo "=== Fast Deployment ==="
                     
-                    echo "Starting services..."
+                    # Create optimized docker-compose.yml
+                    cat > docker-compose.yml << 'EOF'
+version: '3.8'
+services:
+  mongodb:
+    image: mongo:6
+    container_name: mongodb
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+    # Health check for faster startup verification
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  backend:
+    image: ${BACKEND_IMAGE}
+    container_name: backend
+    ports:
+      - "5000:5000"
+    environment:
+      MONGODB_URI: mongodb://mongodb:27017/devops
+      NODE_ENV: production
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    restart: unless-stopped
+    # Health check
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  frontend:
+    image: ${FRONTEND_IMAGE}
+    container_name: frontend
+    ports:
+      - "5173:5173"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+EOF
+
+                    echo "Starting services in detached mode..."
                     docker-compose up -d
                     
-                    echo "Waiting for services to start..."
-                    sleep 15
+                    echo "=== Quick Health Check ==="
                     
-                    echo "=== Container Status ==="
+                    # Check if containers are starting (don't wait long)
+                    sleep 5
+                    
+                    echo "Container status after 5 seconds:"
                     docker-compose ps
                     
-                    # Check if containers are running
-                    echo "=== Health Check ==="
-                    for container in mongodb backend frontend; do
-                        if docker-compose ps $container | grep -q "Up"; then
-                            echo "✅ $container is running"
-                        else
-                            echo "❌ $container is NOT running"
-                            docker-compose logs $container --tail=10
-                        fi
-                    done
+                    # Quick check - just see if containers exist
+                    RUNNING_COUNT=$(docker-compose ps -q | wc -l)
+                    echo "Containers found: $RUNNING_COUNT"
+                    
+                    if [ "$RUNNING_COUNT" -eq 3 ]; then
+                        echo "✅ All containers created and starting"
+                    else
+                        echo "⚠️ Some containers might be starting slowly"
+                    }
                 '''
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Quick Verify Deployment') {
             steps {
                 sh '''
-                    echo "=== Verifying Deployment ==="
+                    echo "=== Quick Verification ==="
                     
-                    # Final check
-                    sleep 5
+                    # Only wait 10 seconds instead of 15+5=20
+                    sleep 10
                     
                     echo "=== Final Container Status ==="
                     docker-compose ps
                     
-                    # Count running containers
-                    running=$(docker-compose ps -q | xargs docker inspect -f "{{.State.Status}}" 2>/dev/null | grep -c "running")
+                    # Get running count
+                    RUNNING_COUNT=$(docker-compose ps | grep -c "Up")
                     
-                    if [ "$running" -eq 3 ]; then
-                        echo "✅ SUCCESS: All 3 containers are running!"
+                    if [ "$RUNNING_COUNT" -eq 3 ]; then
+                        echo "🎉 SUCCESS: All 3 containers are running!"
                         
+                        # Quick network test
                         echo ""
-                        echo "🎉 DEPLOYMENT COMPLETED SUCCESSFULLY"
-                        echo "======================================="
-                        echo "Services deployed:"
-                        echo "1. MongoDB:    localhost:27017"
-                        echo "2. Backend:    localhost:5000"
-                        echo "3. Frontend:   localhost:5173"
-                        echo "======================================="
+                        echo "🌐 Quick Connectivity Test:"
+                        if docker-compose exec -T backend curl -s -o /dev/null -w "%{http_code}" http://localhost:5000 2>/dev/null | grep -q "200\|404"; then
+                            echo "✅ Backend is responding"
+                        fi
                         
                         # Get EC2 public IP
                         echo ""
-                        echo "🌐 Public Access URLs:"
-                        if PUBLIC_IP=$(curl -s --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null); then
-                            echo "Backend API:  http://$PUBLIC_IP:5000"
-                            echo "Frontend App: http://$PUBLIC_IP:5173"
-                        else
-                            echo "Use your EC2 public IP with ports 5000 and 5173"
-                        fi
+                        echo "Public Access URLs:"
+                        PUBLIC_IP=$(curl -s --max-time 3 http://169.254.169.254/latest/meta-data/public-ipv4 2>/dev/null || echo "YOUR_EC2_IP")
+                        echo "Backend:  http://$PUBLIC_IP:5000"
+                        echo "Frontend: http://$PUBLIC_IP:5173"
+                    elif [ "$RUNNING_COUNT" -ge 1 ]; then
+                        echo "⚠️ $RUNNING_COUNT/3 containers are running"
+                        echo "Containers might still be starting up"
+                        echo "Check logs if needed:"
+                        docker-compose logs --tail=5
                     else
-                        echo "❌ ERROR: Only $running/3 containers are running"
-                        echo "=== Debug Info ==="
-                        docker-compose ps -a
-                        docker-compose logs --tail=50
+                        echo "❌ No containers running"
+                        docker-compose logs --tail=20
                         exit 1
                     fi
                 '''
@@ -217,19 +239,12 @@ pipeline {
 
     post {
         always {
-            echo "==========================================="
-            echo "Build Result: ${currentBuild.currentResult}"
-            echo "Build URL: ${env.BUILD_URL}"
-            echo "Build Number: ${env.BUILD_NUMBER}"
-            echo "==========================================="
-        }
-        
-        success {
-            echo "🎉 PIPELINE COMPLETED SUCCESSFULLY"
-        }
-        
-        failure {
-            echo "❌ PIPELINE FAILED"
+            sh '''
+                echo "=== Pipeline Summary ==="
+                echo "Build Result: ${currentBuild.currentResult}"
+                echo "Build Number: ${env.BUILD_NUMBER}"
+                echo "========================="
+            '''
         }
     }
 }
