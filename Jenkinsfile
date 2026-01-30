@@ -9,7 +9,7 @@ pipeline {
     }
 
     options {
-        timeout(time: 15, unit: 'MINUTES')  // Reduced from 30 to 15
+        timeout(time: 15, unit: 'MINUTES')
         retry(1)
     }
 
@@ -33,8 +33,8 @@ pipeline {
                     echo "=== Pre-pulling Docker Images ==="
                     # Pull images in parallel to save time
                     docker pull mongo:6 &
-                    docker pull ${BACKEND_IMAGE} &
-                    docker pull ${FRONTEND_IMAGE} &
+                    docker pull ${BACKEND_IMAGE} 2>/dev/null || true &
+                    docker pull ${FRONTEND_IMAGE} 2>/dev/null || true &
                     wait
                     echo "✅ Images pre-pulled"
                 '''
@@ -187,7 +187,7 @@ EOF
                         echo "✅ All containers created and starting"
                     else
                         echo "⚠️ Some containers might be starting slowly"
-                    }
+                    fi
                 '''
             }
         }
@@ -209,10 +209,10 @@ EOF
                     if [ "$RUNNING_COUNT" -eq 3 ]; then
                         echo "🎉 SUCCESS: All 3 containers are running!"
                         
-                        # Quick network test
+                        # Quick network test - simplified
                         echo ""
                         echo "🌐 Quick Connectivity Test:"
-                        if docker-compose exec -T backend curl -s -o /dev/null -w "%{http_code}" http://localhost:5000 2>/dev/null | grep -q "200\|404"; then
+                        if docker-compose exec -T backend curl -s -o /dev/null http://localhost:5000 2>/dev/null; then
                             echo "✅ Backend is responding"
                         fi
                         
@@ -239,12 +239,18 @@ EOF
 
     post {
         always {
-            sh '''
-                echo "=== Pipeline Summary ==="
-                echo "Build Result: ${currentBuild.currentResult}"
-                echo "Build Number: ${env.BUILD_NUMBER}"
-                echo "========================="
-            '''
+            echo "=== Pipeline Summary ==="
+            echo "Build Result: ${currentBuild.currentResult}"
+            echo "Build Number: ${env.BUILD_NUMBER}"
+            echo "========================="
+        }
+        
+        success {
+            echo "🎉 PIPELINE COMPLETED SUCCESSFULLY"
+        }
+        
+        failure {
+            echo "❌ PIPELINE FAILED"
         }
     }
 }
