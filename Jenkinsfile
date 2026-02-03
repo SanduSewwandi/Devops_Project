@@ -78,8 +78,11 @@ EOF
         stage('Clean Previous Deployment') {
             steps {
                 sh '''
+                    echo "Stopping existing containers..."
                     docker-compose down -v --remove-orphans || true
-                    docker system prune -f || true
+                    
+                    echo "Cleaning up dangling images only..."
+                    docker image prune -f
                 '''
             }
         }
@@ -129,7 +132,7 @@ EOF
                     running=$(docker-compose ps --services --filter "status=running" | wc -l)
                     if [ "$running" -eq 3 ]; then
                         echo "✅ SUCCESS: All 3 containers are running!"
-                        PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || echo "localhost")
+                        PUBLIC_IP=$(curl -s --max-time 5 http://169.254.169.254/latest/meta-data/public-ipv4 || echo "localhost")
                         echo "Access App at: http://$PUBLIC_IP:5173"
                     else
                         echo "❌ ERROR: Only $running containers are running"
@@ -152,4 +155,4 @@ EOF
             echo "❌ PIPELINE FAILED"
         }
     }
-} 
+}
