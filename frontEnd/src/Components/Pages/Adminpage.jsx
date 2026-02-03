@@ -30,6 +30,7 @@ import {
   Target,
 } from "lucide-react"
 import "./Adminpage.css"
+import "./AddPlant.jsx"
 
 export default function AdminPage() {
   const [activeSection, setActiveSection] = useState("dashboard")
