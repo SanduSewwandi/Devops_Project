@@ -2,18 +2,19 @@ version: '3.8'
 
 services:
   frontend:
-    image: sandusewwandi/devops_frontend:latest  # Changed from build: to image:
+    image: sandusewwandi/devops_frontend:latest
     container_name: frontend
     ports:
       - "5173:5173"
     environment:
-      - REACT_APP_API_URL=http://backend:5000
+      # Use the Public IP so your browser can find the API
+      - REACT_APP_API_URL=http://54.234.237.10:5000
     depends_on:
       - backend
     restart: unless-stopped
 
   backend:
-    image: sandusewwandi/devops_backend:latest  # Changed from build: to image:
+    image: sandusewwandi/devops_backend:latest
     container_name: backend
     ports:
       - "5000:5000"
