@@ -7,7 +7,6 @@ services:
     ports:
       - "5173:5173"
     environment:
-      # Vite requires variables to start with VITE_ to be accessible in the browser
       - VITE_API_URL=http://54.234.237.10:5000
     depends_on:
       - backend
@@ -19,7 +18,8 @@ services:
     ports:
       - "5000:5000"
     environment:
-      # Note: No quotes used here. Docker Compose handles these as strings automatically.
+      # FIX: Removed quotes and extra spaces. 
+      # Docker-compose list format (- KEY=VALUE) treats quotes as literal characters.
       - JWT_SECRET=dummysecret
       - MONGODB_URI=mongodb://mongo:27017/devops
       - NODE_ENV=production
