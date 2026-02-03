@@ -319,7 +319,7 @@ export default function AdminPage() {
             throw new Error("Failed to update plant on server");
           }
 
-          
+
           const updatedPlant = await response.json();
           console.log("Plant updated on server:", updatedPlant);
           
@@ -328,6 +328,7 @@ export default function AdminPage() {
               ? { ...updatedPlant.plant || updatedPlant } 
               : plant
           );
+          
           
           setPlantsState(updatedPlants);
           localStorage.setItem('plants', JSON.stringify(updatedPlants));
