@@ -7,8 +7,8 @@ services:
     ports:
       - "5173:5173"
     environment:
-      # Use the Public IP so your browser can find the API
-      - REACT_APP_API_URL=http://54.234.237.10:5000
+      # Vite requires variables to start with VITE_ to be accessible in the browser
+      - VITE_API_URL=http://54.234.237.10:5000
     depends_on:
       - backend
     restart: unless-stopped
@@ -19,9 +19,15 @@ services:
     ports:
       - "5000:5000"
     environment:
+      # Note: No quotes used here. Docker Compose handles these as strings automatically.
       - JWT_SECRET=dummysecret
       - MONGODB_URI=mongodb://mongo:27017/devops
       - NODE_ENV=production
+      - CLDN_API_KEY=823756362343243
+      - CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c
+      - CLDN_NAME=djzjdus1k
+      - ADMIN_EMAIL=admin@plant.com
+      - ADMIN_PASS=Admin123
     depends_on:
       - mongo
     restart: unless-stopped
