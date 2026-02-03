@@ -25,6 +25,8 @@ services:
       - CLDN_NAME=djzjdus1k
       - ADMIN_EMAIL=admin@plant.com
       - ADMIN_PASS=Admin123
+    volumes:
+     - ./uploads:/app/uploads
     depends_on:
       - mongo
     restart: unless-stopped
