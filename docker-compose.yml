@@ -1,15 +1,13 @@
 version: '3.8'
 
 services:
-  frontend:
-    image: sandusewwandi/devops_frontend:latest
-    container_name: frontend
+  mongo:
+    image: mongo:6
+    container_name: mongo
     ports:
-      - "5173:5173"
-    environment:
-      - VITE_API_URL=http://54.234.237.10:5000
-    depends_on:
-      - backend
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
     restart: unless-stopped
 
   backend:
@@ -18,8 +16,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      # FIX: Removed quotes and extra spaces. 
-      # Docker-compose list format (- KEY=VALUE) treats quotes as literal characters.
+      # These must be explicitly defined because .env is ignored by Docker
       - JWT_SECRET=dummysecret
       - MONGODB_URI=mongodb://mongo:27017/devops
       - NODE_ENV=production
@@ -32,13 +29,16 @@ services:
       - mongo
     restart: unless-stopped
 
-  mongo:
-    image: mongo:6
-    container_name: mongo
+  frontend:
+    image: sandusewwandi/devops_frontend:latest
+    container_name: frontend
     ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
+      - "5173:5173"
+    environment:
+      # Inject the Public IP for the browser
+      - VITE_API_URL=http://54.234.237.10:5000
+    depends_on:
+      - backend
     restart: unless-stopped
 
 volumes:
