@@ -48,7 +48,7 @@ const Shop = () => {
   const processPlantImage = (plant) => {
     if (plant.images && plant.images.length > 0 && plant.images[0]) {
       const imageUrl = plant.images[0];
-      if (imageUrl.startsWith('/')) return `http://localhost:5000${imageUrl}`;
+      if (imageUrl.startsWith('/')) return `http://54.234.237.10:5000${imageUrl}`;
       if (imageUrl.startsWith('http')) return imageUrl;
       if (imageUrl.startsWith('data:')) return imageUrl;
       return imageUrl;
@@ -114,7 +114,7 @@ const Shop = () => {
   useEffect(() => {
     const fetchPlants = async () => {
       try {
-        const response = await axios.get("http://localhost:5000/api/plant/list");
+        const response = await axios.get("http://54.234.237.10:5000/api/plant/list");
         const plantsData = response.data?.plants || response.data?.data || [];
         
         const plantsWithProcessedData = plantsData.map(processPlantData);

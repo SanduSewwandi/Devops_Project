@@ -16,7 +16,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
 
   const [images, setImages] = useState([]);
   const [uploading, setUploading] = useState(false);
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+  const API_URL = import.meta.env.VITE_API_URL || "http://54.234.237.10:5000";
 
   // Use useEffect to properly initialize form data when initialData changes
   useEffect(() => {

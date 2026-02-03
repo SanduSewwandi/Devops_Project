@@ -28,7 +28,7 @@ const Login = () => {
   const [subscribeNewsletter, setSubscribeNewsletter] = useState(false);
   const [loginSuccess, setLoginSuccess] = useState(false);
 
-  const API_URL = import.meta.env.VITE_API_URL || "http://localhost:5000";
+  const API_URL = import.meta.env.VITE_API_URL || "http://54.234.237.10:5000";
   const ADMIN_EMAIL = import.meta.env.VITE_ADMIN_EMAIL || "admin@plant.com";
   const IS_DEVELOPMENT = import.meta.env.NODE_ENV === 'development' || import.meta.env.VITE_ENABLE_TEST_LOGIN === 'true';
 

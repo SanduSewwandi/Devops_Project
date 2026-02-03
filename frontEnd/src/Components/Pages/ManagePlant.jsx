@@ -18,7 +18,7 @@ const ManagePlant = () => {
       setLoading(true);
       const token = localStorage.getItem('adminToken');
 
-      const response = await fetch('http://localhost:5000/api/plant/manage', {
+      const response = await fetch('http://54.234.237.10:5000/api/plant/manage', {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',

@@ -98,7 +98,7 @@ const Signup = () => {
     if (validate()) {
       setLoading(true)
       try {
-        const res = await fetch("http://localhost:5000/api/user/register", {
+        const res = await fetch("http://54.234.237.10:5000/api/user/register", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({

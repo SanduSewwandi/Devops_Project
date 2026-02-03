@@ -54,7 +54,7 @@ export default function AdminPage() {
     }
     
     if (imageUrl.startsWith('/')) {
-      return `http://localhost:5000${imageUrl}`;
+      return `http://54.234.237.10:5000${imageUrl}`;
     }
     
     if (imageUrl.startsWith('http')) {
@@ -131,7 +131,7 @@ export default function AdminPage() {
   const fetchPlants = async () => {
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:5000/api/plant/list", {
+      const response = await fetch("http://54.234.237.10:5000/api/plant/list", {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -165,7 +165,7 @@ export default function AdminPage() {
   const fetchUsers = async () => {
     setLoading(true);
     try {
-      const response = await fetch("http://localhost:5000/api/user/all", {
+      const response = await fetch("http://54.234.237.10:5000/api/user/all", {
         method: "GET",
         headers: {
           "Content-Type": "application/json",
@@ -218,7 +218,7 @@ export default function AdminPage() {
       
       // Try to save to backend first
       try {
-        const response = await fetch("http://localhost:5000/api/plant/add", {
+        const response = await fetch("http://54.234.237.10:5000/api/plant/add", {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -306,7 +306,7 @@ export default function AdminPage() {
       if (editingPlant._id) {
         setLoading(true);
         try {
-          const response = await fetch(`http://localhost:5000/api/plant/update/${editingPlant._id}`, {
+          const response = await fetch(`http://54.234.237.10:5000/api/plant/update/${editingPlant._id}`, {
             method: "PUT",
             headers: {
               "Content-Type": "application/json",
@@ -379,7 +379,7 @@ export default function AdminPage() {
 
   if (window.confirm("Are you sure you want to delete this plant?")) {
     try {
-      const response = await fetch(`http://localhost:5000/api/plant/delete/${plantId}`, {
+      const response = await fetch(`http://54.234.237.10:5000/api/plant/delete/${plantId}`, {
         method: "DELETE",
         headers: {
           "Authorization": `Bearer ${token}`,
@@ -413,7 +413,7 @@ export default function AdminPage() {
 
     if (window.confirm("Are you sure you want to delete this user?")) {
       try {
-        const response = await fetch(`http://localhost:5000/api/users/${userId}`, {
+        const response = await fetch(`http://54.234.237.10:5000/api/users/${userId}`, {
           method: "DELETE",
         });
 
