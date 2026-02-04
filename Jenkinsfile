@@ -24,16 +24,13 @@ pipeline {
                     def publicIp = sh(script: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4", returnStdout: true).trim()
                     echo "=== Detected Public IP: ${publicIp} ==="
 
-                    // Fix: Use correct path and create docker-compose.yml with proper CORS
-                    sh """
-                        # Create docker-compose.yml with proper permissions
-                        cat > docker-compose.yml << 'EOF'
-version: '3.8'
+                    // Create docker-compose.yml with proper CORS - FIXED PERMISSIONS
+                    writeFile file: 'docker-compose.yml', text: """version: '3.8'
 
 services:
-  mongodb:
+  mongo:
     image: mongo:6
-    container_name: mongodb
+    container_name: mongo
     ports:
       - "27017:27017"
     volumes:
@@ -46,7 +43,7 @@ services:
     ports:
       - "5000:5000"
     environment:
-      MONGODB_URI: mongodb://mongodb:27017/devops
+      MONGODB_URI: mongodb://mongo:27017/devops
       NODE_ENV: production
       JWT_SECRET: dummysecret
       CLDN_API_KEY: 823756362343243
@@ -59,7 +56,7 @@ services:
     volumes:
       - uploads_volume:/app/uploads
     depends_on:
-      - mongodb
+      - mongo
     restart: unless-stopped
 
   frontend:
@@ -77,12 +74,15 @@ services:
 volumes:
   mongo_data:
   uploads_volume:
-EOF
-                        
-                        # Fix permission issues
+"""
+                    
+                    // Fix permission issues
+                    sh '''
                         chmod 644 docker-compose.yml
                         ls -la docker-compose.yml
-                    """
+                        echo "=== Docker Compose File Created ==="
+                        cat docker-compose.yml
+                    '''
                 }
             }
         }
@@ -106,18 +106,20 @@ EOF
                     # Check if directories exist
                     if [ -d "backEnd" ]; then
                         echo "Building backend..."
-                        cd backEnd && docker build -t ${BACKEND_IMAGE} . || echo "Backend build failed"
+                        cd backEnd && docker build -t ${BACKEND_IMAGE} .
                         cd ..
+                        echo "✅ Backend built successfully"
                     else
-                        echo "WARNING: backEnd directory not found"
+                        echo "WARNING: backEnd directory not found - using existing image"
                     fi
                     
                     if [ -d "frontEnd" ]; then
                         echo "Building frontend..."
-                        cd frontEnd && docker build -t ${FRONTEND_IMAGE} . || echo "Frontend build failed"
+                        cd frontEnd && docker build -t ${FRONTEND_IMAGE} .
                         cd ..
+                        echo "✅ Frontend built successfully"
                     else
-                        echo "WARNING: frontEnd directory not found"
+                        echo "WARNING: frontEnd directory not found - using existing image"
                     fi
                     
                     echo "=== Build completed ==="
@@ -139,13 +141,17 @@ EOF
                         # Push backend if built
                         if docker image inspect ${BACKEND_IMAGE} > /dev/null 2>&1; then
                             echo "Pushing backend image..."
-                            docker push ${BACKEND_IMAGE} || echo "Backend push failed"
+                            docker push ${BACKEND_IMAGE}
+                        else
+                            echo "⚠️ Backend image not found locally - skipping push"
                         fi
                         
                         # Push frontend if built
                         if docker image inspect ${FRONTEND_IMAGE} > /dev/null 2>&1; then
                             echo "Pushing frontend image..."
-                            docker push ${FRONTEND_IMAGE} || echo "Frontend push failed"
+                            docker push ${FRONTEND_IMAGE}
+                        else
+                            echo "⚠️ Frontend image not found locally - skipping push"
                         fi
                         
                         docker logout
@@ -167,10 +173,18 @@ EOF
                         
                         # Wait for containers to start
                         echo "Waiting for containers to stabilize..."
-                        sleep 20
+                        sleep 30
                         
                         # Check container status
+                        echo "=== Container Status ==="
                         docker-compose ps
+                        
+                        # Show logs if any containers are not running
+                        docker-compose ps | grep -q "Exit" && {
+                            echo "Some containers exited - showing logs:"
+                            docker-compose logs --tail=100
+                            exit 1
+                        }
                     else
                         echo "ERROR: docker-compose.yml not found!"
                         exit 1
@@ -191,7 +205,7 @@ EOF
                     echo "Running containers: $running_containers"
                     echo "Total containers: $total_containers"
                     
-                    if [ "$running_containers" -ge 2 ]; then
+                    if [ "$running_containers" -eq 3 ]; then
                         PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
                         echo ""
                         echo "✅ DEPLOYMENT SUCCESSFUL!"
@@ -205,10 +219,18 @@ EOF
                         echo "Testing backend API..."
                         curl -f http://localhost:5000/api/health 2>/dev/null && echo "✅ Backend is healthy" || echo "⚠️  Backend health check failed"
                         
+                        echo ""
+                        echo "=== Quick Health Check ==="
+                        echo "Frontend:"
+                        curl -I http://localhost:5173 2>/dev/null | head -1 || echo "Frontend not responding"
+                        
+                        echo "Backend:"
+                        curl -I http://localhost:5000/api/health 2>/dev/null | head -1 || echo "Backend not responding"
+                        
                     else
                         echo "❌ DEPLOYMENT FAILED: Not all containers are running"
                         echo "Checking logs..."
-                        docker-compose logs --tail=50
+                        docker-compose logs --tail=100
                         exit 1
                     fi
                 '''
@@ -220,13 +242,34 @@ EOF
         always {
             echo "Build Result: ${currentBuild.currentResult}"
             
-            // Cleanup on failure
-            unsuccessful {
-                sh '''
-                    echo "Cleaning up after failure..."
-                    docker-compose down -v 2>/dev/null || true
-                '''
+            // Cleanup on failure - FIXED: Use failure/success conditions
+            script {
+                if (currentBuild.currentResult == 'FAILURE' || currentBuild.currentResult == 'UNSTABLE') {
+                    sh '''
+                        echo "Cleaning up after failure..."
+                        docker-compose down -v 2>/dev/null || true
+                    '''
+                }
             }
+        }
+        success {
+            sh '''
+                echo "✅ Pipeline completed successfully!"
+                PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
+                echo ""
+                echo "================================================"
+                echo "🎉 APPLICATION DEPLOYED SUCCESSFULLY!"
+                echo "🌿 Plant Shop is now live!"
+                echo ""
+                echo "📱 Access your application at:"
+                echo "   http://$PUBLIC_IP:5173"
+                echo ""
+                echo "🔧 Admin Features:"
+                echo "   - Add New Plant should now work"
+                echo "   - Edit Plant functionality enabled"
+                echo "   - Delete Plant available"
+                echo "================================================"
+            '''
         }
     }
 }
