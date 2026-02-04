@@ -2,12 +2,10 @@ import { useState, useEffect } from "react"
 import {
   LayoutDashboard,
   Users,
-  Settings,
   Leaf,
   ShoppingCart,
   BarChart,
   Bell,
-  ChevronRight,
   Search,
   Plus,
   Edit,
@@ -19,10 +17,8 @@ import {
   Eye,
   Filter,
   Download,
-  Calendar,
   Clock,
   CheckCircle,
-  XCircle,
   AlertCircle,
   Star,
   RefreshCw,
@@ -30,7 +26,7 @@ import {
   Target,
 } from "lucide-react"
 import "./Adminpage.css"
-import "./AddPlant.jsx"
+import AddPlant from "./AddPlant"
 
 export default function AdminPage() {
   const [activeSection, setActiveSection] = useState("dashboard")
@@ -41,6 +37,7 @@ export default function AdminPage() {
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(false)
   const [forceUpdate, setForceUpdate] = useState(0)
+  const [useLocalStorage, setUseLocalStorage] = useState(false)
 
   // Function to process plant image URL
   const getPlantImageUrl = (plant) => {
@@ -150,6 +147,12 @@ export default function AdminPage() {
       localStorage.setItem('plants', JSON.stringify(plantsData));
     } catch (error) {
       console.error("Error fetching plants:", error);
+      // Fallback to local storage if API fails
+      setUseLocalStorage(true);
+      const storedPlants = localStorage.getItem('plants');
+      if (storedPlants) {
+        setPlantsState(JSON.parse(storedPlants));
+      }
     } finally {
       setLoading(false);
     }
@@ -189,224 +192,258 @@ export default function AdminPage() {
 
   // Navigation to add product page
   const handleAddProduct = () => {
-    setEditingPlant(null)
-    setShowAddPlant(true)
-  }
+    console.log("Add product button clicked");
+    console.log("Current editing plant:", editingPlant);
+    setEditingPlant(null);
+    setShowAddPlant(true);
+  };
 
-  // Handle adding new plant - FIXED: Use the actual stockQuantity from form data
+  // Handle adding new plant
   const handleAddPlant = async (plantData) => {
     try {
       console.log('Plant data received in handleAddPlant:', plantData);
       
-      // Prepare data for backend with correct field names
-      const backendPlantData = {
-        name: plantData.plantName || plantData.name,
-        description: plantData.description,
-        price: parseFloat(plantData.price),
-        images: plantData.images || [],
-        category: plantData.category,
-        rating: parseFloat(plantData.rating) || 0,
-        stockQuantity: parseInt(plantData.stockQuantity) || 0,
-        care: {
-          water: plantData.wateringSchedule || plantData.care?.water,
-          light: plantData.lightRequirements || plantData.care?.light,
-          difficulty: plantData.careDifficulty || plantData.care?.difficulty
-        },
-        popular: plantData.isPopular || plantData.popular || false
-      };
-      
-      console.log('Backend plant data:', backendPlantData);
-      
+      if (useLocalStorage) {
+        // Use local storage
+        const existingPlants = JSON.parse(localStorage.getItem('plants') || '[]');
+        const updatedPlants = [...existingPlants, plantData];
+        setPlantsState(updatedPlants);
+        localStorage.setItem('plants', JSON.stringify(updatedPlants));
+        setShowAddPlant(false);
+        setForceUpdate(prev => prev + 1);
+        alert('Plant added successfully to local storage!');
+        return;
+      }
+
       // Try to save to backend first
-      try {
-        const response = await fetch("http://54.234.237.10:5000/api/plant/add", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-          },
-          body: JSON.stringify(backendPlantData),
-        });
-        
-        if (response.ok) {
-          const newPlant = await response.json();
-          console.log('Plant added to backend:', newPlant);
-          
-          // Update local state with the plant from backend
-          const updatedPlants = [...plants, newPlant.plant || newPlant];
-          setPlantsState(updatedPlants);
-          localStorage.setItem('plants', JSON.stringify(updatedPlants));
-          setShowAddPlant(false);
-          setForceUpdate(prev => prev + 1);
-          return;
-        } else {
-          console.error('Failed to add plant to backend');
+      const token = localStorage.getItem("adminToken");
+      if (!token) {
+        alert("Please login as admin first");
+        return;
+      }
+
+      // Prepare FormData for backend
+      const formData = new FormData();
+      formData.append("name", plantData.plantName || plantData.name);
+      formData.append("description", plantData.description);
+      formData.append("price", plantData.price);
+      formData.append("category", plantData.category);
+      formData.append("rating", plantData.rating);
+      formData.append("stockQuantity", plantData.stockQuantity);
+      formData.append("popular", plantData.isPopular || plantData.popular || false);
+      formData.append("care", JSON.stringify({
+        water: plantData.wateringSchedule || plantData.care?.water,
+        light: plantData.lightRequirements || plantData.care?.light,
+        difficulty: plantData.careDifficulty || plantData.care?.difficulty
+      }));
+
+      // Handle images
+      if (plantData.images && plantData.images.length > 0) {
+        if (typeof plantData.images[0] === 'string') {
+          // Base64 string
+          formData.append("image1", plantData.images[0]);
+        } else if (plantData.images[0] instanceof File) {
+          // File object
+          formData.append("image1", plantData.images[0]);
         }
-      } catch (error) {
-        console.error('Error adding plant to backend:', error);
       }
+
+      const response = await fetch("http://54.234.237.10:5000/api/plant/add", {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+        body: formData,
+      });
       
-      // Fallback to local storage if backend fails
-      const newPlant = {
-        ...backendPlantData,
-        id: Date.now(),
-        dateAdded: new Date().toISOString()
+      if (response.ok) {
+        const newPlant = await response.json();
+        console.log('Plant added to backend:', newPlant);
+        
+        // Update local state with the plant from backend
+        const updatedPlants = [...plants, newPlant.plant || newPlant];
+        setPlantsState(updatedPlants);
+        localStorage.setItem('plants', JSON.stringify(updatedPlants));
+        setShowAddPlant(false);
+        setForceUpdate(prev => prev + 1);
+        alert('Plant added successfully!');
+        return;
+      } else {
+        const errorData = await response.json();
+        console.error('Failed to add plant to backend:', errorData);
+        alert(`Failed to add plant: ${errorData.message || 'Unknown error'}`);
       }
-      
-      console.log('New plant object (local):', newPlant);
-      
-      const updatedPlants = [...plants, newPlant]
-      setPlantsState(updatedPlants)
-      localStorage.setItem('plants', JSON.stringify(updatedPlants))
-      setShowAddPlant(false)
-      setForceUpdate(prev => prev + 1);
     } catch (error) {
-      console.error('Error adding plant:', error)
-      alert('Failed to add plant. Please try again.')
+      console.error('Error adding plant:', error);
+      alert('Failed to add plant. Please try again.');
     }
-  }
+  };
 
   // Handle editing plant
   const handleEditPlant = (plant) => {
-    // Transform backend plant data to frontend format if needed
+    console.log("Editing plant:", plant);
+    // Transform backend plant data to frontend format
     const frontendPlant = {
       ...plant,
       plantName: plant.name,
       wateringSchedule: plant.care?.water,
       lightRequirements: plant.care?.light,
       careDifficulty: plant.care?.difficulty,
-      isPopular: plant.popular
+      isPopular: plant.popular,
+      stockQuantity: plant.stockQuantity || plant.stock || 0
     };
     
-    setEditingPlant(frontendPlant)
-    setShowAddPlant(true)
-  }
+    setEditingPlant(frontendPlant);
+    setShowAddPlant(true);
+  };
 
-  // Handle updating plant - FIXED: Use the actual stockQuantity from form data
+  // Handle updating plant
   const handleUpdatePlant = async (plantData) => {
     try {
       console.log('Plant data received in handleUpdatePlant:', plantData);
       
-      // Prepare data for backend with correct field names
-      const backendPlantData = {
-        name: plantData.plantName || plantData.name,
-        description: plantData.description,
-        price: parseFloat(plantData.price),
-        images: plantData.images || [],
-        category: plantData.category,
-        rating: parseFloat(plantData.rating) || 0,
-        stockQuantity: parseInt(plantData.stockQuantity) || 0,
-        care: {
-          water: plantData.wateringSchedule || plantData.care?.water,
-          light: plantData.lightRequirements || plantData.care?.light,
-          difficulty: plantData.careDifficulty || plantData.care?.difficulty
-        },
-        popular: plantData.isPopular || plantData.popular || false
-      };
-      
-      // If we have a backend ID, update via API
-      if (editingPlant._id) {
-        setLoading(true);
-        try {
-          const response = await fetch(`http://54.234.237.10:5000/api/plant/update/${editingPlant._id}`, {
-            method: "PUT",
-            headers: {
-              "Content-Type": "application/json",
-            },
-            body: JSON.stringify(backendPlantData),
-          });
+      if (useLocalStorage || !editingPlant?._id) {
+        // Use local storage
+        const existingPlants = JSON.parse(localStorage.getItem('plants') || '[]');
+        const updatedPlants = existingPlants.map(plant => 
+          (plant.id === editingPlant?.id || plant._id === editingPlant?._id) 
+            ? { 
+                ...plantData,
+                id: editingPlant?.id || plant.id,
+                _id: editingPlant?._id || plant._id,
+                dateAdded: plant.dateAdded || new Date().toISOString()
+              }
+            : plant
+        );
+        
+        setPlantsState(updatedPlants);
+        localStorage.setItem('plants', JSON.stringify(updatedPlants));
+        setShowAddPlant(false);
+        setEditingPlant(null);
+        setForceUpdate(prev => prev + 1);
+        alert('Plant updated successfully in local storage!');
+        return;
+      }
 
-          if (!response.ok) {
-            throw new Error("Failed to update plant on server");
-          }
+      // Update via API
+      const token = localStorage.getItem("adminToken");
+      if (!token) {
+        alert("Please login as admin first");
+        return;
+      }
 
-          const updatedPlant = await response.json();
-          console.log("Plant updated on server:", updatedPlant);
-          
-          const updatedPlants = plants.map(plant =>
-            plant._id === editingPlant._id 
-              ? { ...updatedPlant.plant || updatedPlant } 
-              : plant
-          );
-          
-          setPlantsState(updatedPlants);
-          localStorage.setItem('plants', JSON.stringify(updatedPlants));
-          setShowAddPlant(false);
-          setEditingPlant(null);
-          setForceUpdate(prev => prev + 1);
-          return;
-        } catch (error) {
-          console.error("Error updating plant on server:", error);
+      // Prepare FormData for backend
+      const formData = new FormData();
+      formData.append("name", plantData.plantName || plantData.name);
+      formData.append("description", plantData.description);
+      formData.append("price", plantData.price);
+      formData.append("category", plantData.category);
+      formData.append("rating", plantData.rating);
+      formData.append("stockQuantity", plantData.stockQuantity);
+      formData.append("popular", plantData.isPopular || plantData.popular || false);
+      formData.append("care", JSON.stringify({
+        water: plantData.wateringSchedule || plantData.care?.water,
+        light: plantData.lightRequirements || plantData.care?.light,
+        difficulty: plantData.careDifficulty || plantData.care?.difficulty
+      }));
+
+      // Handle images
+      if (plantData.images && plantData.images.length > 0) {
+        if (typeof plantData.images[0] === 'string') {
+          // Base64 string
+          formData.append("image1", plantData.images[0]);
+        } else if (plantData.images[0] instanceof File) {
+          // File object
+          formData.append("image1", plantData.images[0]);
         }
       }
-      
-      // Local update
-      const updatedPlants = plants.map(plant =>
-        (plant.id === editingPlant.id || plant._id === editingPlant._id) 
-          ? { 
-              ...backendPlantData, 
-              id: editingPlant.id || plant.id,
-              _id: editingPlant._id || plant._id,
-              dateAdded: plant.dateAdded || new Date().toISOString()
-            }
-          : plant
-      );
-      
-      console.log('Updated plants:', updatedPlants);
-      
-      setPlantsState(updatedPlants);
-      localStorage.setItem('plants', JSON.stringify(updatedPlants));
-      setShowAddPlant(false);
-      setEditingPlant(null);
-      setForceUpdate(prev => prev + 1);
+
+      const response = await fetch(`http://54.234.237.10:5000/api/plant/update/${editingPlant._id}`, {
+        method: "PUT",
+        headers: {
+          "Authorization": `Bearer ${token}`,
+        },
+        body: formData,
+      });
+
+      if (response.ok) {
+        const updatedPlant = await response.json();
+        console.log("Plant updated on server:", updatedPlant);
+        
+        const updatedPlants = plants.map(plant =>
+          plant._id === editingPlant._id 
+            ? { ...updatedPlant.plant || updatedPlant } 
+            : plant
+        );
+        
+        setPlantsState(updatedPlants);
+        localStorage.setItem('plants', JSON.stringify(updatedPlants));
+        setShowAddPlant(false);
+        setEditingPlant(null);
+        setForceUpdate(prev => prev + 1);
+        alert('Plant updated successfully!');
+        return;
+      } else {
+        const errorData = await response.json();
+        console.error('Failed to update plant:', errorData);
+        alert(`Failed to update plant: ${errorData.message || 'Unknown error'}`);
+      }
     } catch (error) {
       console.error('Error updating plant:', error);
       alert('Failed to update plant. Please try again.');
-    } finally {
-      setLoading(false);
     }
   };
 
+  // Handle deleting plant
   const handleDeletePlant = async (plantId) => {
-  if (!plantId) return alert("Invalid plant ID");
+    if (!plantId) return alert("Invalid plant ID");
 
-  // Get token from localStorage or your auth context
-  const token = localStorage.getItem('adminToken'); // or your token storage method
-  
-  if (!token) {
-    alert("Please login again");
-    // Redirect to login
-    return;
-  }
+    if (window.confirm("Are you sure you want to delete this plant?")) {
+      try {
+        if (useLocalStorage) {
+          // Delete from local storage
+          const updatedPlants = plants.filter((plant) => (plant._id || plant.id) !== plantId);
+          setPlantsState(updatedPlants);
+          localStorage.setItem("plants", JSON.stringify(updatedPlants));
+          setForceUpdate(prev => prev + 1);
+          alert("Plant deleted successfully from local storage!");
+          return;
+        }
 
-  if (window.confirm("Are you sure you want to delete this plant?")) {
-    try {
-      const response = await fetch(`http://54.234.237.10:5000/api/plant/delete/${plantId}`, {
-        method: "DELETE",
-        headers: {
-          "Authorization": `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-      });
+        // Delete from backend
+        const token = localStorage.getItem('adminToken');
+        if (!token) {
+          alert("Please login as admin first");
+          return;
+        }
 
-      if (!response.ok) {
-        throw new Error("Failed to delete plant from server");
+        const response = await fetch(`http://54.234.237.10:5000/api/plant/delete/${plantId}`, {
+          method: "DELETE",
+          headers: {
+            "Authorization": `Bearer ${token}`,
+            "Content-Type": "application/json",
+          },
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to delete plant from server");
+        }
+
+        const data = await response.json();
+        console.log(data.message);
+
+        const updatedPlants = plants.filter((plant) => (plant._id || plant.id) !== plantId);
+        setPlantsState(updatedPlants);
+        localStorage.setItem("plants", JSON.stringify(updatedPlants));
+        setForceUpdate(prev => prev + 1);
+
+        alert("Plant deleted successfully!");
+      } catch (error) {
+        console.error("Error deleting plant:", error);
+        alert("Failed to delete plant. Please try again.");
       }
-
-      const data = await response.json();
-      console.log(data.message);
-
-      const updatedPlants = plants.filter((plant) => (plant._id || plant.id) !== plantId);
-      setPlantsState(updatedPlants);
-      localStorage.setItem("plants", JSON.stringify(updatedPlants));
-      setForceUpdate(prev => prev + 1);
-
-      alert("Plant deleted successfully!");
-    } catch (error) {
-      console.error("Error deleting plant:", error);
-      alert("Failed to delete plant. Please try again.");
     }
-  }
-};
+  };
 
   // Function to delete a user
   const handleDeleteUser = async (userId) => {
@@ -433,15 +470,24 @@ export default function AdminPage() {
 
   // Close modal
   const handleCloseModal = () => {
-    setShowAddPlant(false)
-    setEditingPlant(null)
-  }
+    setShowAddPlant(false);
+    setEditingPlant(null);
+  };
+
+  // Handle saving plant (routes to correct function)
+  const handleSavePlant = (plantData) => {
+    if (editingPlant) {
+      handleUpdatePlant(plantData);
+    } else {
+      handleAddPlant(plantData);
+    }
+  };
 
   const navItems = [
     { id: "dashboard", icon: <LayoutDashboard />, label: "Dashboard" },
     { id: "users", icon: <Users />, label: "Users" },
     { id: "products", icon: <Leaf />, label: "Plants" },
-  ]
+  ];
 
   // Dashboard Mock Data
   const stats = [
@@ -481,26 +527,26 @@ export default function AdminPage() {
       trend: "+8%",
       subtitle: "Daily orders"
     },
-  ]
+  ];
 
   // Get low stock products from dynamic plants data
   const lowStockProducts = plants.filter(plant => 
     (plant.stockQuantity || 0) <= 10 && (plant.stockQuantity || 0) > 0
-  ).slice(0, 4)
+  ).slice(0, 4);
 
   // Get top selling plants
-  const topSellingPlants = plants.filter(plant => plant.popular).slice(0, 3)
+  const topSellingPlants = plants.filter(plant => plant.popular).slice(0, 3);
 
   // Filter users based on search term
   const filteredUsers = users.filter(user => 
-    user.name && user.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    user.email && user.email.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+    (user.name && user.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (user.email && user.email.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
 
   const filteredPlants = plants.filter(plant => 
-    plant.name && plant.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    plant.category && plant.category.toLowerCase().includes(searchTerm.toLowerCase())
-  )
+    (plant.name && plant.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
+    (plant.category && plant.category.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
 
   // Get category display name
   const getCategoryDisplayName = (category) => {
@@ -511,9 +557,9 @@ export default function AdminPage() {
       'flowering': 'Flowering Plants',
       'herbs': 'Herbs',
       'trees': 'Trees'
-    }
-    return categoryMap[category] || category
-  }
+    };
+    return categoryMap[category] || category;
+  };
 
   // Format date for display
   const formatDate = (dateString) => {
@@ -763,7 +809,7 @@ export default function AdminPage() {
               </div>
             </div>
           </div>
-        )
+        );
       case "users":
         return (
           <div className="admin-users-content">
@@ -862,7 +908,7 @@ export default function AdminPage() {
               )}
             </div>
           </div>
-        )
+        );
       case "products":
         return (
           <div className="admin-products-content">
@@ -1014,7 +1060,7 @@ export default function AdminPage() {
                               </div>
                             </td>
                           </tr>
-                        )
+                        );
                       })}
                     </tbody>
                   </table>
@@ -1022,7 +1068,7 @@ export default function AdminPage() {
               </div>
             </div>
           </div>
-        )
+        );
       default:
         return (
           <div className="admin-dashboard-content">
@@ -1047,9 +1093,9 @@ export default function AdminPage() {
               ))}
             </div>
           </div>
-        )
+        );
     }
-  }
+  };
 
   return (
     <div className="admin-workspace">
@@ -1087,11 +1133,12 @@ export default function AdminPage() {
       {showAddPlant && (
         <AddPlant 
           onClose={handleCloseModal}
-          onSave={editingPlant ? handleUpdatePlant : handleAddPlant}
+          onSave={handleSavePlant}
           initialData={editingPlant}
           isEditing={!!editingPlant}
+          isLocalStorage={useLocalStorage}
         />
       )}
     </div>
-  )
+  );
 }
