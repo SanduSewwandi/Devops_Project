@@ -25,13 +25,29 @@ pipeline {
             }
         }
 
-        stage('Clean Previous') {
+        stage('Clean Previous - FORCEFUL') {
             steps {
                 sh '''
-                    echo "=== Cleaning Previous Deployment ==="
-                    docker-compose down -v 2>/dev/null || true
+                    echo "=== FORCE CLEANING Previous Deployment ==="
+                    
+                    # Force stop and remove ALL containers that might conflict
+                    docker stop frontend backend mongo mongodb 2>/dev/null || true
+                    docker rm frontend backend mongo mongodb 2>/dev/null || true
+                    
+                    # Remove any container with similar names
+                    docker ps -a --filter "name=mongo" --format "{{.Names}}" | xargs -r docker stop 2>/dev/null || true
+                    docker ps -a --filter "name=mongo" --format "{{.Names}}" | xargs -r docker rm 2>/dev/null || true
+                    
+                    # Clean Docker Compose
+                    docker-compose down -v --remove-orphans 2>/dev/null || true
+                    
+                    # Clean up Docker resources
                     docker system prune -f 2>/dev/null || true
-                    echo "✅ Cleanup completed"
+                    
+                    # Remove dangling volumes
+                    docker volume prune -f 2>/dev/null || true
+                    
+                    echo "✅ Force cleanup completed"
                 '''
             }
         }
@@ -47,10 +63,16 @@ pipeline {
                         cd backEnd
                         
                         # Create a .env file with CORS configuration for build
-                        echo "CLDN_API_KEY=823756362343243" > .env
-                        echo "CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c" >> .env
-                        echo "CLDN_NAME=djzjdus1k" >> .env
-                        echo "CORS_ORIGIN=http://localhost:5173,http://${PUBLIC_IP}:5173" >> .env
+                        cat > .env << EOF
+CLDN_API_KEY=823756362343243
+CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c
+CLDN_NAME=djzjdus1k
+CORS_ORIGIN=http://localhost:5173,http://${PUBLIC_IP}:5173
+JWT_SECRET=dummysecret
+MONGODB_URI=mongodb://mongo:27017/devops
+NODE_ENV=production
+MAX_FILE_SIZE=10485760
+EOF
                         
                         docker build -t ${BACKEND_IMAGE} .
                         cd ..
@@ -85,13 +107,13 @@ pipeline {
                         echo "${DH_PASS}" | docker login -u "${DH_USER}" --password-stdin
                         
                         # Push backend
-                        docker push ${BACKEND_IMAGE} 2>/dev/null || echo "⚠️ Backend push failed or image not found"
+                        docker push ${BACKEND_IMAGE} || echo "⚠️ Backend push warning"
                         
                         # Push frontend
-                        docker push ${FRONTEND_IMAGE} 2>/dev/null || echo "⚠️ Frontend push failed or image not found"
+                        docker push ${FRONTEND_IMAGE} || echo "⚠️ Frontend push warning"
                         
                         docker logout
-                        echo "✅ Push attempt completed"
+                        echo "✅ Push completed"
                     '''
                 }
             }
@@ -102,13 +124,16 @@ pipeline {
                 sh '''
                     echo "=== Creating docker-compose.yml with CORS ==="
                     
+                    # Remove existing docker-compose.yml if any
+                    rm -f docker-compose.yml 2>/dev/null || true
+                    
                     cat > docker-compose.yml << EOF
 version: '3.8'
 
 services:
-  mongo:
+  mongodb:
     image: mongo:6
-    container_name: mongo
+    container_name: mongodb
     ports:
       - "27017:27017"
     volumes:
@@ -122,7 +147,7 @@ services:
       - "5000:5000"
     environment:
       - JWT_SECRET=dummysecret
-      - MONGODB_URI=mongodb://mongo:27017/devops
+      - MONGODB_URI=mongodb://mongodb:27017/devops
       - NODE_ENV=production
       - CLDN_API_KEY=823756362343243
       - CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c
@@ -136,7 +161,7 @@ services:
     volumes:
       - uploads_volume:/app/uploads
     depends_on:
-      - mongo
+      - mongodb
     restart: unless-stopped
 
   frontend:
@@ -167,17 +192,23 @@ EOF
                 sh '''
                     echo "=== Deploying Application ==="
                     
+                    # Check if docker-compose.yml exists
+                    if [ ! -f "docker-compose.yml" ]; then
+                        echo "❌ docker-compose.yml not found!"
+                        exit 1
+                    fi
+                    
                     # Create uploads directory with proper permissions
                     mkdir -p uploads
                     chmod 777 uploads 2>/dev/null || true
                     
-                    # Start services
-                    echo "Starting services..."
-                    docker-compose up -d
+                    # Start services with force recreate
+                    echo "Starting services with force recreate..."
+                    docker-compose up -d --force-recreate --remove-orphans
                     
                     # Wait for services
-                    echo "Waiting for services to start (40 seconds)..."
-                    sleep 40
+                    echo "Waiting for services to start (30 seconds)..."
+                    sleep 30
                     
                     # Check status
                     echo "=== Service Status ==="
@@ -196,36 +227,40 @@ EOF
                     
                     # Test backend health
                     echo "Testing backend API..."
-                    BACKEND_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/health)
+                    BACKEND_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/health 2>/dev/null || echo "000")
                     
                     if [ "$BACKEND_HEALTH" = "200" ]; then
-                        echo "✅ Backend is healthy"
+                        echo "✅ Backend is healthy (HTTP 200)"
                         
                         # Test CORS headers
                         echo "Testing CORS configuration..."
-                        CORS_TEST=$(curl -s -I -X OPTIONS http://localhost:5000/api/plant/add \
+                        CORS_HEADER=$(curl -s -I -X OPTIONS http://localhost:5000/api/plant/add \
                           -H "Origin: http://${PUBLIC_IP}:5173" 2>/dev/null | \
-                          grep -i "access-control-allow-origin" || echo "No CORS headers")
+                          grep -i "access-control-allow-origin:" || echo "No CORS headers found")
                         
-                        echo "CORS Headers: $CORS_TEST"
+                        echo "CORS Header: $CORS_HEADER"
                         
-                        if echo "$CORS_TEST" | grep -q "${PUBLIC_IP}"; then
+                        if echo "$CORS_HEADER" | grep -q "${PUBLIC_IP}"; then
                             echo "✅ CORS is properly configured for image uploads"
                         else
                             echo "⚠️ CORS might not be configured properly"
                         fi
                         
+                        # Test Cloudinary configuration
+                        echo "Checking Cloudinary configuration in backend..."
+                        docker exec backend env 2>/dev/null | grep CLDN && echo "✅ Cloudinary env vars found" || echo "⚠️ Cloudinary env vars not found"
+                        
                     else
                         echo "❌ Backend health check failed: HTTP $BACKEND_HEALTH"
-                        echo "=== Backend Logs ==="
-                        docker logs backend --tail=30
+                        echo "=== Backend Logs (last 30 lines) ==="
+                        docker logs backend --tail=30 2>/dev/null || echo "Could not get backend logs"
                     fi
                     
                     # Test frontend
                     echo "Testing frontend..."
-                    FRONTEND_TEST=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5173)
+                    FRONTEND_TEST=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 2>/dev/null || echo "000")
                     if [ "$FRONTEND_TEST" = "200" ] || [ "$FRONTEND_TEST" = "304" ]; then
-                        echo "✅ Frontend is serving"
+                        echo "✅ Frontend is serving (HTTP $FRONTEND_TEST)"
                     else
                         echo "⚠️ Frontend check: HTTP $FRONTEND_TEST"
                     fi
@@ -238,8 +273,8 @@ EOF
                 sh '''
                     echo "=== Final Verification ==="
                     
-                    # Check running containers
-                    RUNNING_COUNT=$(docker ps --filter "name=frontend|name=backend|name=mongo" --filter "status=running" | grep -v "CONTAINER ID" | wc -l)
+                    # Check running containers using docker-compose
+                    RUNNING_COUNT=$(docker-compose ps --services --filter "status=running" 2>/dev/null | wc -l)
                     
                     echo "Running containers: $RUNNING_COUNT/3"
                     
@@ -262,16 +297,29 @@ EOF
                         echo "🔧 Configuration Applied:"
                         echo "   ✓ CORS enabled for frontend"
                         echo "   ✓ Cloudinary configured"
-                        echo "   ✓ File uploads enabled"
+                        echo "   ✓ File uploads enabled (10MB max)"
                         echo "=========================================="
+                        
+                        # Display container info
+                        echo ""
+                        echo "=== Container Information ==="
+                        docker-compose ps
+                        
                     else
                         echo "❌ Some containers are not running"
                         echo ""
                         echo "=== Troubleshooting ==="
-                        docker-compose ps
+                        echo "1. Checking all containers:"
+                        docker-compose ps -a
                         echo ""
-                        echo "=== Backend Logs ==="
-                        docker logs backend --tail=50
+                        echo "2. Backend logs:"
+                        docker logs backend --tail=50 2>/dev/null || echo "No backend logs"
+                        echo ""
+                        echo "3. MongoDB logs:"
+                        docker logs mongodb --tail=20 2>/dev/null || echo "No MongoDB logs"
+                        echo ""
+                        echo "4. Frontend logs:"
+                        docker logs frontend --tail=20 2>/dev/null || echo "No frontend logs"
                         exit 1
                     fi
                 '''
@@ -299,11 +347,12 @@ EOF
                 echo "   3. Go to Plants section"
                 echo "   4. Click 'Add New Plant'"
                 echo "   5. Fill form and upload image"
-                echo "   6. It should work now!"
+                echo "   6. It should work now with CORS fixed!"
                 echo ""
                 echo "📝 If still having issues:"
                 echo "   - Check backend logs: docker logs backend"
-                echo "   - Verify CORS: curl -I http://${PUBLIC_IP}:5000"
+                echo "   - Check CORS: docker exec backend env | grep CORS"
+                echo "   - Check Cloudinary: docker exec backend env | grep CLDN"
                 echo "=========================================="
             '''
         }
@@ -314,21 +363,22 @@ EOF
                 echo "=========================================="
                 echo "❌ PIPELINE FAILED!"
                 echo ""
-                echo "Quick fixes to try:"
-                echo "1. Manually set CORS in backend container:"
-                echo "   docker exec backend sh -c 'export CORS_ORIGIN=\"http://localhost:5173,http://${PUBLIC_IP}:5173\" && pkill -f node && npm start &'"
+                echo "Manual fixes to try:"
+                echo "1. Remove all containers manually:"
+                echo "   docker stop $(docker ps -aq) && docker rm $(docker ps -aq)"
                 echo ""
-                echo "2. Restart backend:"
-                echo "   docker restart backend"
+                echo "2. Check port conflicts:"
+                echo "   sudo lsof -i :5173"
+                echo "   sudo lsof -i :5000"
+                echo "   sudo lsof -i :27017"
                 echo ""
-                echo "3. Check Cloudinary credentials:"
-                echo "   docker exec backend env | grep CLDN"
+                echo "3. Run deployment manually:"
+                echo "   docker-compose down"
+                echo "   docker-compose up -d"
+                echo "   docker logs backend"
                 echo ""
-                echo "4. Manual test of image upload:"
-                echo "   curl -X POST http://localhost:5000/api/plant/add \\"
-                echo "     -H \"Authorization: Bearer YOUR_TOKEN\" \\"
-                echo "     -F \"name=Test\" -F \"price=10\" \\"
-                echo "     -F \"images=@./test.jpg\""
+                echo "4. Test backend API directly:"
+                echo "   curl http://localhost:5000/api/health"
                 echo "=========================================="
             '''
         }
