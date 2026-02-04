@@ -36,9 +36,9 @@ pipeline {
 
         stage('Create Docker Compose') {
             steps {
-                sh """
+                sh '''
                     # Create docker-compose.yml directly
-                    cat > docker-compose.yml << 'EOF'
+                    cat > docker-compose.yml << EOF
 version: '3.8'
 
 services:
@@ -66,7 +66,7 @@ services:
       ADMIN_EMAIL: admin@plant.com
       ADMIN_PASS: Admin123
       # CORS Configuration - CRITICAL for Add Plant functionality
-      CORS_ORIGIN: http://localhost:5173,http://${env.PUBLIC_IP}:5173
+      CORS_ORIGIN: http://localhost:5173,http://${PUBLIC_IP}:5173
     volumes:
       - uploads_volume:/app/uploads
     depends_on:
@@ -80,7 +80,7 @@ services:
       - "5173:5173"
     environment:
       # Fixes the CORS/localhost error by pointing to the EC2 Public IP
-      VITE_API_URL: http://${env.PUBLIC_IP}:5000
+      VITE_API_URL: http://${PUBLIC_IP}:5000
     depends_on:
       - backend
     restart: unless-stopped
@@ -92,7 +92,7 @@ EOF
                     
                     echo "=== Docker Compose File Created ==="
                     ls -la docker-compose.yml
-                """
+                '''
             }
         }
 
@@ -101,7 +101,7 @@ EOF
                 sh '''
                     echo "=== Cleaning Previous Deployment ==="
                     
-                    # Clean up using docker commands directly (no docker-compose needed)
+                    # Clean up using docker commands directly
                     docker stop frontend backend mongo 2>/dev/null || true
                     docker rm frontend backend mongo 2>/dev/null || true
                     docker volume prune -f 2>/dev/null || true
@@ -130,7 +130,7 @@ EOF
                     
                     # Show container status
                     echo "=== Container Status ==="
-                    docker-compose ps || docker ps --filter "name=frontend\|name=backend\|name=mongo"
+                    docker-compose ps || docker ps | grep -E "(frontend|backend|mongo)"
                     
                     # Check if containers are running
                     echo "=== Checking container health ==="
@@ -172,7 +172,7 @@ EOF
                     echo "=== Final Verification ==="
                     
                     # Count running containers
-                    running_count=$(docker ps --filter "name=frontend\|name=backend\|name=mongo" --filter "status=running" | grep -v "CONTAINER ID" | wc -l)
+                    running_count=$(docker ps | grep -E "(frontend|backend|mongo)" | grep -v "CONTAINER ID" | wc -l)
                     
                     echo "Running application containers: $running_count/3"
                     
@@ -195,7 +195,7 @@ EOF
                         echo "=========================================="
                         
                         # Create a simple test script
-                        cat > test_deployment.sh << 'TEST_EOF'
+                        cat > test_deployment.sh << 'TESTEOF'
 #!/bin/bash
 echo "Testing deployment..."
 echo "1. Testing MongoDB..."
@@ -206,7 +206,7 @@ curl -s http://localhost:5000/api/health && echo "✅ Backend OK" || echo "❌ B
 
 echo "3. Testing Frontend..."
 curl -s -I http://localhost:5173 | head -1 && echo "✅ Frontend OK" || echo "❌ Frontend test failed"
-TEST_EOF
+TESTEOF
                         
                         chmod +x test_deployment.sh
                         ./test_deployment.sh
@@ -214,7 +214,7 @@ TEST_EOF
                     else
                         echo "❌ DEPLOYMENT FAILED: Expected 3 containers, found $running_count running"
                         echo "=== Debug Information ==="
-                        docker-compose ps || docker ps -a --filter "name=frontend\|name=backend\|name=mongo"
+                        docker-compose ps || docker ps -a | grep -E "(frontend|backend|mongo)"
                         echo ""
                         echo "=== Recent Logs ==="
                         docker-compose logs --tail=50 || {
