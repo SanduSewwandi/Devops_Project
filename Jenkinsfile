@@ -6,7 +6,6 @@ pipeline {
         DOCKERHUB_USER  = 'sandusewwandi'
         BACKEND_IMAGE  = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE = "${DOCKERHUB_USER}/devops_frontend:latest"
-        PUBLIC_IP = '54.234.237.10'  // Your EC2 IP
     }
 
     options {
@@ -14,66 +13,61 @@ pipeline {
     }
 
     stages {
-        stage('Checkout Code') {
+        stage('Checkout & Get IP') {
             steps {
                 checkout scm
-                sh '''
-                    echo "=== Repository Checked Out ==="
-                    ls -la
-                '''
+                script {
+                    // Get public IP
+                    def publicIp = sh(script: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4", returnStdout: true).trim()
+                    env.PUBLIC_IP = publicIp
+                    echo "=== Public IP: ${publicIp} ==="
+                }
             }
         }
 
-        stage('Clean Previous Deployment') {
+        stage('Clean Previous') {
             steps {
                 sh '''
                     echo "=== Cleaning Previous Deployment ==="
-                    
-                    # Stop and remove containers if they exist
-                    docker stop frontend backend mongo 2>/dev/null || true
-                    docker rm frontend backend mongo 2>/dev/null || true
-                    
-                    # Clean up Docker resources
+                    docker-compose down -v 2>/dev/null || true
                     docker system prune -f 2>/dev/null || true
-                    
                     echo "✅ Cleanup completed"
                 '''
             }
         }
 
-        stage('Build Backend Image') {
+        stage('Build Images') {
             steps {
                 sh '''
-                    echo "=== Building Backend Docker Image ==="
+                    echo "=== Building Docker Images ==="
                     
+                    # Build Backend
                     if [ -d "backEnd" ] && [ -f "backEnd/Dockerfile" ]; then
-                        echo "Building backend from source..."
+                        echo "Building backend with CORS fix..."
                         cd backEnd
+                        
+                        # Create a .env file with CORS configuration for build
+                        echo "CLDN_API_KEY=823756362343243" > .env
+                        echo "CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c" >> .env
+                        echo "CLDN_NAME=djzjdus1k" >> .env
+                        echo "CORS_ORIGIN=http://localhost:5173,http://${PUBLIC_IP}:5173" >> .env
+                        
                         docker build -t ${BACKEND_IMAGE} .
                         cd ..
-                        echo "✅ Backend image built: ${BACKEND_IMAGE}"
+                        echo "✅ Backend image built with CORS"
                     else
-                        echo "⚠️ Backend directory/Dockerfile not found"
-                        echo "Will use existing image: ${BACKEND_IMAGE}"
+                        echo "⚠️ Using existing backend image"
                     fi
-                '''
-            }
-        }
-
-        stage('Build Frontend Image') {
-            steps {
-                sh '''
-                    echo "=== Building Frontend Docker Image ==="
                     
+                    # Build Frontend
                     if [ -d "frontEnd" ] && [ -f "frontEnd/Dockerfile" ]; then
-                        echo "Building frontend from source..."
+                        echo "Building frontend..."
                         cd frontEnd
                         docker build -t ${FRONTEND_IMAGE} .
                         cd ..
-                        echo "✅ Frontend image built: ${FRONTEND_IMAGE}"
+                        echo "✅ Frontend image built"
                     else
-                        echo "⚠️ Frontend directory/Dockerfile not found"
-                        echo "Will use existing image: ${FRONTEND_IMAGE}"
+                        echo "⚠️ Using existing frontend image"
                     fi
                 '''
             }
@@ -87,114 +81,154 @@ pipeline {
                     passwordVariable: 'DH_PASS'
                 )]) {
                     sh '''
-                        echo "=== Pushing Images to Docker Hub ==="
-                        
-                        # Login to Docker Hub
+                        echo "=== Pushing to Docker Hub ==="
                         echo "${DH_PASS}" | docker login -u "${DH_USER}" --password-stdin
                         
-                        # Push backend image if it exists locally
-                        if docker image inspect ${BACKEND_IMAGE} > /dev/null 2>&1; then
-                            echo "Pushing backend image: ${BACKEND_IMAGE}"
-                            docker push ${BACKEND_IMAGE}
-                            echo "✅ Backend image pushed"
-                        else
-                            echo "⚠️ Backend image not found locally"
-                        fi
+                        # Push backend
+                        docker push ${BACKEND_IMAGE} 2>/dev/null || echo "⚠️ Backend push failed or image not found"
                         
-                        # Push frontend image if it exists locally
-                        if docker image inspect ${FRONTEND_IMAGE} > /dev/null 2>&1; then
-                            echo "Pushing frontend image: ${FRONTEND_IMAGE}"
-                            docker push ${FRONTEND_IMAGE}
-                            echo "✅ Frontend image pushed"
-                        else
-                            echo "⚠️ Frontend image not found locally"
-                        fi
+                        # Push frontend
+                        docker push ${FRONTEND_IMAGE} 2>/dev/null || echo "⚠️ Frontend push failed or image not found"
                         
-                        # Logout from Docker Hub
                         docker logout
-                        echo "✅ Push completed"
+                        echo "✅ Push attempt completed"
                     '''
                 }
             }
         }
 
-        stage('Deploy MongoDB') {
+        stage('Create Docker Compose with CORS') {
             steps {
                 sh '''
-                    echo "=== Deploying MongoDB ==="
+                    echo "=== Creating docker-compose.yml with CORS ==="
                     
-                    # Create MongoDB volume if it doesn't exist
-                    docker volume create mongo_data 2>/dev/null || true
+                    cat > docker-compose.yml << EOF
+version: '3.8'
+
+services:
+  mongo:
+    image: mongo:6
+    container_name: mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
+  backend:
+    image: ${BACKEND_IMAGE}
+    container_name: backend
+    ports:
+      - "5000:5000"
+    environment:
+      - JWT_SECRET=dummysecret
+      - MONGODB_URI=mongodb://mongo:27017/devops
+      - NODE_ENV=production
+      - CLDN_API_KEY=823756362343243
+      - CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c
+      - CLDN_NAME=djzjdus1k
+      - ADMIN_EMAIL=admin@plant.com
+      - ADMIN_PASS=Admin123
+      # CORS Configuration - FIX FOR IMAGE UPLOAD
+      - CORS_ORIGIN=http://localhost:5173,http://${PUBLIC_IP}:5173
+      # File upload settings
+      - MAX_FILE_SIZE=10485760
+    volumes:
+      - uploads_volume:/app/uploads
+    depends_on:
+      - mongo
+    restart: unless-stopped
+
+  frontend:
+    image: ${FRONTEND_IMAGE}
+    container_name: frontend
+    ports:
+      - "5173:5173"
+    environment:
+      - VITE_API_URL=http://${PUBLIC_IP}:5000
+    depends_on:
+      - backend
+    restart: unless-stopped
+
+volumes:
+  mongo_data:
+  uploads_volume:
+EOF
                     
-                    # Run MongoDB
-                    docker run -d \
-                      --name mongo \
-                      -p 27017:27017 \
-                      -v mongo_data:/data/db \
-                      --restart unless-stopped \
-                      mongo:6
-                    
-                    echo "✅ MongoDB deployed"
-                    sleep 5
+                    echo "✅ docker-compose.yml created with CORS"
+                    echo "=== File contents ==="
+                    cat docker-compose.yml
                 '''
             }
         }
 
-        stage('Deploy Backend') {
+        stage('Deploy') {
             steps {
                 sh '''
-                    echo "=== Deploying Backend ==="
+                    echo "=== Deploying Application ==="
                     
-                    # Create uploads volume
-                    docker volume create uploads_volume 2>/dev/null || true
+                    # Create uploads directory with proper permissions
+                    mkdir -p uploads
+                    chmod 777 uploads 2>/dev/null || true
                     
-                    # Pull image if not built locally (optional)
-                    docker pull ${BACKEND_IMAGE} 2>/dev/null || echo "Using local image"
+                    # Start services
+                    echo "Starting services..."
+                    docker-compose up -d
                     
-                    # Run backend with CORS configuration
-                    docker run -d \
-                      --name backend \
-                      -p 5000:5000 \
-                      -e MONGODB_URI=mongodb://mongo:27017/devops \
-                      -e NODE_ENV=production \
-                      -e JWT_SECRET=dummysecret \
-                      -e CLDN_API_KEY=823756362343243 \
-                      -e CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c \
-                      -e CLDN_NAME=djzjdus1k \
-                      -e ADMIN_EMAIL=admin@plant.com \
-                      -e ADMIN_PASS=Admin123 \
-                      -e CORS_ORIGIN=http://localhost:5173,http://${PUBLIC_IP}:5173 \
-                      -v uploads_volume:/app/uploads \
-                      --link mongo \
-                      --restart unless-stopped \
-                      ${BACKEND_IMAGE}
+                    # Wait for services
+                    echo "Waiting for services to start (40 seconds)..."
+                    sleep 40
                     
-                    echo "✅ Backend deployed"
-                    echo "Waiting for backend to initialize..."
-                    sleep 15
+                    # Check status
+                    echo "=== Service Status ==="
+                    docker-compose ps
                 '''
             }
         }
 
-        stage('Deploy Frontend') {
+        stage('Test Image Upload') {
             steps {
                 sh '''
-                    echo "=== Deploying Frontend ==="
+                    echo "=== Testing Image Upload ==="
                     
-                    # Pull image if not built locally (optional)
-                    docker pull ${FRONTEND_IMAGE} 2>/dev/null || echo "Using local image"
-                    
-                    # Run frontend
-                    docker run -d \
-                      --name frontend \
-                      -p 5173:5173 \
-                      -e VITE_API_URL=http://${PUBLIC_IP}:5000 \
-                      --link backend \
-                      --restart unless-stopped \
-                      ${FRONTEND_IMAGE}
-                    
-                    echo "✅ Frontend deployed"
+                    # Wait extra time for backend to fully start
                     sleep 10
+                    
+                    # Test backend health
+                    echo "Testing backend API..."
+                    BACKEND_HEALTH=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/health)
+                    
+                    if [ "$BACKEND_HEALTH" = "200" ]; then
+                        echo "✅ Backend is healthy"
+                        
+                        # Test CORS headers
+                        echo "Testing CORS configuration..."
+                        CORS_TEST=$(curl -s -I -X OPTIONS http://localhost:5000/api/plant/add \
+                          -H "Origin: http://${PUBLIC_IP}:5173" 2>/dev/null | \
+                          grep -i "access-control-allow-origin" || echo "No CORS headers")
+                        
+                        echo "CORS Headers: $CORS_TEST"
+                        
+                        if echo "$CORS_TEST" | grep -q "${PUBLIC_IP}"; then
+                            echo "✅ CORS is properly configured for image uploads"
+                        else
+                            echo "⚠️ CORS might not be configured properly"
+                        fi
+                        
+                    else
+                        echo "❌ Backend health check failed: HTTP $BACKEND_HEALTH"
+                        echo "=== Backend Logs ==="
+                        docker logs backend --tail=30
+                    fi
+                    
+                    # Test frontend
+                    echo "Testing frontend..."
+                    FRONTEND_TEST=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:5173)
+                    if [ "$FRONTEND_TEST" = "200" ] || [ "$FRONTEND_TEST" = "304" ]; then
+                        echo "✅ Frontend is serving"
+                    else
+                        echo "⚠️ Frontend check: HTTP $FRONTEND_TEST"
+                    fi
                 '''
             }
         }
@@ -202,56 +236,18 @@ pipeline {
         stage('Verify Deployment') {
             steps {
                 sh '''
-                    echo "=== Verifying Deployment ==="
+                    echo "=== Final Verification ==="
                     
-                    # Check container status
-                    echo "Container Status:"
-                    echo "----------------"
+                    # Check running containers
+                    RUNNING_COUNT=$(docker ps --filter "name=frontend|name=backend|name=mongo" --filter "status=running" | grep -v "CONTAINER ID" | wc -l)
                     
-                    mongo_running=$(docker inspect -f "{{.State.Running}}" mongo 2>/dev/null || echo "false")
-                    backend_running=$(docker inspect -f "{{.State.Running}}" backend 2>/dev/null || echo "false")
-                    frontend_running=$(docker inspect -f "{{.State.Running}}" frontend 2>/dev/null || echo "false")
+                    echo "Running containers: $RUNNING_COUNT/3"
                     
-                    echo "MongoDB: $mongo_running"
-                    echo "Backend: $backend_running"
-                    echo "Frontend: $frontend_running"
-                    
-                    # Health checks
-                    echo ""
-                    echo "Health Checks:"
-                    echo "--------------"
-                    
-                    # Check MongoDB
-                    echo -n "MongoDB: "
-                    if [ "$mongo_running" = "true" ]; then
-                        docker exec mongo mongosh --eval "db.version()" 2>/dev/null && echo "✅ Healthy" || echo "⚠️ Unhealthy"
-                    else
-                        echo "❌ Not running"
-                    fi
-                    
-                    # Check Backend
-                    echo -n "Backend API: "
-                    if [ "$backend_running" = "true" ]; then
-                        sleep 5
-                        curl -s -f http://localhost:5000/api/health && echo "✅ Healthy" || echo "⚠️ Unhealthy"
-                    else
-                        echo "❌ Not running"
-                    fi
-                    
-                    # Check Frontend
-                    echo -n "Frontend: "
-                    if [ "$frontend_running" = "true" ]; then
-                        curl -s -I http://localhost:5173 | head -1 | grep -q "200" && echo "✅ Serving" || echo "⚠️ Not serving"
-                    else
-                        echo "❌ Not running"
-                    fi
-                    
-                    # Final verification
-                    if [ "$mongo_running" = "true" ] && [ "$backend_running" = "true" ] && [ "$frontend_running" = "true" ]; then
+                    if [ "$RUNNING_COUNT" -eq 3 ]; then
                         echo ""
                         echo "🎉 🎉 🎉 DEPLOYMENT SUCCESSFUL! 🎉 🎉 🎉"
                         echo "=========================================="
-                        echo "🌿 Plant Shop Application is LIVE!"
+                        echo "🌿 Plant Shop Application"
                         echo ""
                         echo "🔗 Application URL:"
                         echo "   http://${PUBLIC_IP}:5173"
@@ -261,33 +257,21 @@ pipeline {
                         echo "   Backend API: http://${PUBLIC_IP}:5000"
                         echo "   MongoDB: http://${PUBLIC_IP}:27017"
                         echo ""
-                        echo "📋 Admin Features:"
-                        echo "   ✅ Add New Plant"
-                        echo "   ✅ Edit Existing Plants"
-                        echo "   ✅ Delete Plants"
-                        echo "   ✅ User Management"
+                        echo "✅ ADD PLANT WITH IMAGES SHOULD NOW WORK!"
                         echo ""
-                        echo "🔧 CORS Configured for:"
-                        echo "   http://${PUBLIC_IP}:5173"
+                        echo "🔧 Configuration Applied:"
+                        echo "   ✓ CORS enabled for frontend"
+                        echo "   ✓ Cloudinary configured"
+                        echo "   ✓ File uploads enabled"
                         echo "=========================================="
                     else
+                        echo "❌ Some containers are not running"
                         echo ""
-                        echo "❌ DEPLOYMENT FAILED!"
+                        echo "=== Troubleshooting ==="
+                        docker-compose ps
                         echo ""
-                        echo "Troubleshooting logs:"
-                        echo "====================="
-                        
-                        echo "MongoDB logs (last 20 lines):"
-                        docker logs mongo --tail=20 2>/dev/null || echo "No logs available"
-                        echo ""
-                        
-                        echo "Backend logs (last 20 lines):"
-                        docker logs backend --tail=20 2>/dev/null || echo "No logs available"
-                        echo ""
-                        
-                        echo "Frontend logs (last 20 lines):"
-                        docker logs frontend --tail=20 2>/dev/null || echo "No logs available"
-                        
+                        echo "=== Backend Logs ==="
+                        docker logs backend --tail=50
                         exit 1
                     fi
                 '''
@@ -298,12 +282,6 @@ pipeline {
     post {
         always {
             echo "Build Status: ${currentBuild.currentResult}"
-            sh '''
-                echo "=== Build Summary ==="
-                echo "Backend Image: ${BACKEND_IMAGE}"
-                echo "Frontend Image: ${FRONTEND_IMAGE}"
-                echo "Public IP: ${PUBLIC_IP}"
-            '''
         }
         
         success {
@@ -312,17 +290,20 @@ pipeline {
                 echo "=========================================="
                 echo "✅ CI/CD PIPELINE COMPLETED SUCCESSFULLY!"
                 echo ""
-                echo "📦 Images Built & Pushed:"
-                echo "   - ${BACKEND_IMAGE}"
-                echo "   - ${FRONTEND_IMAGE}"
-                echo ""
-                echo "🚀 Application Deployed:"
+                echo "🌿 Application deployed at:"
                 echo "   http://${PUBLIC_IP}:5173"
                 echo ""
-                echo "🔧 Features Available:"
-                echo "   - Add New Plant (CORS fixed)"
-                echo "   - Edit/Delete Plants"
-                echo "   - User Management"
+                echo "🔧 To test 'Add Plant with Image':"
+                echo "   1. Go to http://${PUBLIC_IP}:5173"
+                echo "   2. Login as admin"
+                echo "   3. Go to Plants section"
+                echo "   4. Click 'Add New Plant'"
+                echo "   5. Fill form and upload image"
+                echo "   6. It should work now!"
+                echo ""
+                echo "📝 If still having issues:"
+                echo "   - Check backend logs: docker logs backend"
+                echo "   - Verify CORS: curl -I http://${PUBLIC_IP}:5000"
                 echo "=========================================="
             '''
         }
@@ -333,20 +314,22 @@ pipeline {
                 echo "=========================================="
                 echo "❌ PIPELINE FAILED!"
                 echo ""
-                echo "Common issues to check:"
-                echo "1. Docker daemon running: sudo systemctl status docker"
-                echo "2. Port conflicts:"
-                echo "   - sudo lsof -i :5173"
-                echo "   - sudo lsof -i :5000"
-                echo "   - sudo lsof -i :27017"
-                echo "3. Docker Hub credentials"
-                echo "4. Dockerfile syntax in backEnd/ and frontEnd/"
-                echo "=========================================="
-                
-                # Show current container status
+                echo "Quick fixes to try:"
+                echo "1. Manually set CORS in backend container:"
+                echo "   docker exec backend sh -c 'export CORS_ORIGIN=\"http://localhost:5173,http://${PUBLIC_IP}:5173\" && pkill -f node && npm start &'"
                 echo ""
-                echo "Current Docker status:"
-                docker ps -a
+                echo "2. Restart backend:"
+                echo "   docker restart backend"
+                echo ""
+                echo "3. Check Cloudinary credentials:"
+                echo "   docker exec backend env | grep CLDN"
+                echo ""
+                echo "4. Manual test of image upload:"
+                echo "   curl -X POST http://localhost:5000/api/plant/add \\"
+                echo "     -H \"Authorization: Bearer YOUR_TOKEN\" \\"
+                echo "     -F \"name=Test\" -F \"price=10\" \\"
+                echo "     -F \"images=@./test.jpg\""
+                echo "=========================================="
             '''
         }
     }

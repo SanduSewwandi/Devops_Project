@@ -16,17 +16,35 @@ services:
     ports:
       - "5000:5000"
     environment:
-      # These must be explicitly defined because .env is ignored by Docker
+      # Authentication
       - JWT_SECRET=dummysecret
       - MONGODB_URI=mongodb://mongo:27017/devops
       - NODE_ENV=production
+      
+      # Cloudinary (for image uploads)
       - CLDN_API_KEY=823756362343243
       - CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c
       - CLDN_NAME=djzjdus1k
+      
+      # Admin
       - ADMIN_EMAIL=admin@plant.com
       - ADMIN_PASS=Admin123
+      
+      # CORS Configuration - THIS FIXES ADD PLANT WITH IMAGES
+      - CORS_ORIGIN=http://localhost:5173,http://54.234.237.10:5173
+      
+      # File upload settings
+      - MAX_FILE_SIZE=10485760  # 10MB
+      - UPLOAD_PATH=/app/uploads
+      
+      # Debug mode (optional)
+      - DEBUG=true
+      
     volumes:
-     - ./uploads:/app/uploads
+      # Mount uploads directory with proper permissions
+      - uploads_volume:/app/uploads
+      - ./logs:/app/logs
+      
     depends_on:
       - mongo
     restart: unless-stopped
@@ -37,11 +55,13 @@ services:
     ports:
       - "5173:5173"
     environment:
-      # Inject the Public IP for the browser
+      # Frontend API URL
       - VITE_API_URL=http://54.234.237.10:5000
+      - VITE_DEBUG=true
     depends_on:
       - backend
     restart: unless-stopped
 
 volumes:
   mongo_data:
+  uploads_volume:  # Named volume for uploads
