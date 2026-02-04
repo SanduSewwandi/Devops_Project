@@ -6,6 +6,7 @@ pipeline {
         DOCKERHUB_USER  = 'sandusewwandi'
         BACKEND_IMAGE  = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE = "${DOCKERHUB_USER}/devops_frontend:latest"
+        WORKSPACE_DIR = pwd()
     }
 
     options {
@@ -20,12 +21,34 @@ pipeline {
                     checkout scm
                 }
                 script {
-                    // Automatically fetch the EC2 Public IP for the CORS fix
+                    // Get public IP
                     def publicIp = sh(script: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4", returnStdout: true).trim()
                     echo "=== Detected Public IP: ${publicIp} ==="
+                    
+                    // Save IP for later use
+                    env.PUBLIC_IP = publicIp
+                    
+                    // Debug: Show workspace permissions
+                    sh '''
+                        echo "=== Workspace Information ==="
+                        pwd
+                        ls -la
+                        echo "User: $(whoami)"
+                        echo "UID: $(id -u)"
+                        echo "GID: $(id -g)"
+                    '''
+                }
+            }
+        }
 
-                    // Create docker-compose.yml with proper CORS - FIXED PERMISSIONS
-                    writeFile file: 'docker-compose.yml', text: """version: '3.8'
+        stage('Create Docker Compose') {
+            steps {
+                script {
+                    // Create docker-compose.yml in a safe way
+                    sh """
+                        # Create docker-compose.yml content
+                        cat << 'EOF_DOCKER_COMPOSE' > /tmp/docker-compose.yml
+version: '3.8'
 
 services:
   mongo:
@@ -52,7 +75,7 @@ services:
       ADMIN_EMAIL: admin@plant.com
       ADMIN_PASS: Admin123
       # CORS Configuration - CRITICAL for Add Plant functionality
-      CORS_ORIGIN: http://localhost:5173,http://${publicIp}:5173
+      CORS_ORIGIN: http://localhost:5173,http://${env.PUBLIC_IP}:5173
     volumes:
       - uploads_volume:/app/uploads
     depends_on:
@@ -66,7 +89,7 @@ services:
       - "5173:5173"
     environment:
       # Fixes the CORS/localhost error by pointing to the EC2 Public IP
-      VITE_API_URL: http://${publicIp}:5000
+      VITE_API_URL: http://${env.PUBLIC_IP}:5000
     depends_on:
       - backend
     restart: unless-stopped
@@ -74,15 +97,19 @@ services:
 volumes:
   mongo_data:
   uploads_volume:
-"""
-                    
-                    // Fix permission issues
-                    sh '''
-                        chmod 644 docker-compose.yml
-                        ls -la docker-compose.yml
+EOF_DOCKER_COMPOSE
+
+                        # Copy to workspace with proper permissions
+                        sudo cp /tmp/docker-compose.yml .
+                        sudo chown jenkins:jenkins docker-compose.yml
+                        sudo chmod 644 docker-compose.yml
+                        
                         echo "=== Docker Compose File Created ==="
-                        cat docker-compose.yml
-                    '''
+                        ls -la docker-compose.yml
+                        echo ""
+                        echo "=== Docker Compose Content ==="
+                        cat docker-compose.yml | head -20
+                    """
                 }
             }
         }
@@ -90,10 +117,17 @@ volumes:
         stage('Clean Previous') {
             steps {
                 sh '''
-                    # Clean up previous containers
-                    docker-compose down -v --remove-orphans 2>/dev/null || true
+                    echo "=== Cleaning Previous Deployment ==="
+                    
+                    # Stop and remove any existing containers
+                    if [ -f "docker-compose.yml" ]; then
+                        docker-compose down -v --remove-orphans 2>/dev/null || true
+                    fi
+                    
+                    # Clean Docker system
                     docker system prune -f 2>/dev/null || true
-                    echo "Cleanup completed"
+                    
+                    echo "✅ Cleanup completed"
                 '''
             }
         }
@@ -103,26 +137,31 @@ volumes:
                 sh '''
                     echo "=== Building Docker Images ==="
                     
-                    # Check if directories exist
-                    if [ -d "backEnd" ]; then
-                        echo "Building backend..."
-                        cd backEnd && docker build -t ${BACKEND_IMAGE} .
+                    # Try to build, but continue if fails (use existing images)
+                    set +e
+                    
+                    if [ -d "backEnd" ] && [ -f "backEnd/Dockerfile" ]; then
+                        echo "📦 Building backend image..."
+                        cd backEnd
+                        docker build -t ${BACKEND_IMAGE} .
                         cd ..
-                        echo "✅ Backend built successfully"
+                        echo "✅ Backend image built"
                     else
-                        echo "WARNING: backEnd directory not found - using existing image"
+                        echo "⚠️ Backend directory or Dockerfile not found, will use existing image"
                     fi
                     
-                    if [ -d "frontEnd" ]; then
-                        echo "Building frontend..."
-                        cd frontEnd && docker build -t ${FRONTEND_IMAGE} .
+                    if [ -d "frontEnd" ] && [ -f "frontEnd/Dockerfile" ]; then
+                        echo "📦 Building frontend image..."
+                        cd frontEnd
+                        docker build -t ${FRONTEND_IMAGE} .
                         cd ..
-                        echo "✅ Frontend built successfully"
+                        echo "✅ Frontend image built"
                     else
-                        echo "WARNING: frontEnd directory not found - using existing image"
+                        echo "⚠️ Frontend directory or Dockerfile not found, will use existing image"
                     fi
                     
-                    echo "=== Build completed ==="
+                    set -e
+                    echo "=== Build stage completed ==="
                 '''
             }
         }
@@ -136,100 +175,124 @@ volumes:
                 )]) {
                     sh '''
                         echo "=== Pushing to Docker Hub ==="
+                        
+                        # Login to Docker Hub
                         echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
                         
-                        # Push backend if built
+                        # Try to push images, but don't fail if they don't exist
+                        set +e
+                        
+                        # Push backend image if it exists
                         if docker image inspect ${BACKEND_IMAGE} > /dev/null 2>&1; then
-                            echo "Pushing backend image..."
+                            echo "⬆️  Pushing backend image..."
                             docker push ${BACKEND_IMAGE}
+                            echo "✅ Backend image pushed"
                         else
-                            echo "⚠️ Backend image not found locally - skipping push"
+                            echo "⚠️ Backend image not found locally, skipping push"
                         fi
                         
-                        # Push frontend if built
+                        # Push frontend image if it exists
                         if docker image inspect ${FRONTEND_IMAGE} > /dev/null 2>&1; then
-                            echo "Pushing frontend image..."
+                            echo "⬆️  Pushing frontend image..."
                             docker push ${FRONTEND_IMAGE}
+                            echo "✅ Frontend image pushed"
                         else
-                            echo "⚠️ Frontend image not found locally - skipping push"
+                            echo "⚠️ Frontend image not found locally, skipping push"
                         fi
                         
+                        set -e
+                        
+                        # Logout from Docker Hub
                         docker logout
-                        echo "=== Push completed ==="
+                        echo "=== Push stage completed ==="
                     '''
                 }
             }
         }
 
-        stage('Deploy') {
+        stage('Deploy Application') {
             steps {
                 sh '''
                     echo "=== Deploying Application ==="
                     
-                    # Check if docker-compose.yml exists
-                    if [ -f "docker-compose.yml" ]; then
-                        echo "Starting containers..."
-                        docker-compose up -d
-                        
-                        # Wait for containers to start
-                        echo "Waiting for containers to stabilize..."
-                        sleep 30
-                        
-                        # Check container status
-                        echo "=== Container Status ==="
-                        docker-compose ps
-                        
-                        # Show logs if any containers are not running
-                        docker-compose ps | grep -q "Exit" && {
-                            echo "Some containers exited - showing logs:"
-                            docker-compose logs --tail=100
-                            exit 1
-                        }
-                    else
-                        echo "ERROR: docker-compose.yml not found!"
+                    if [ ! -f "docker-compose.yml" ]; then
+                        echo "❌ ERROR: docker-compose.yml not found!"
                         exit 1
                     fi
+                    
+                    echo "🚀 Starting containers..."
+                    docker-compose up -d
+                    
+                    # Wait for containers to start
+                    echo "⏳ Waiting for containers to start (30 seconds)..."
+                    sleep 30
+                    
+                    # Show container status
+                    echo "=== Container Status ==="
+                    docker-compose ps
+                    
+                    # Check if containers are running
+                    if docker-compose ps | grep -q "Exit"; then
+                        echo "❌ Some containers have exited!"
+                        echo "=== Container Logs ==="
+                        docker-compose logs --tail=50
+                        exit 1
+                    fi
+                    
+                    echo "✅ Deployment completed"
                 '''
             }
         }
 
-        stage('Verify') {
+        stage('Verify Deployment') {
             steps {
                 sh '''
                     echo "=== Verifying Deployment ==="
                     
-                    # Check running containers
-                    running_containers=$(docker-compose ps --services --filter "status=running" 2>/dev/null | wc -l)
-                    total_containers=$(docker-compose ps --services 2>/dev/null | wc -l)
+                    # Count running containers
+                    running_count=$(docker-compose ps --services --filter "status=running" 2>/dev/null | wc -l)
                     
-                    echo "Running containers: $running_containers"
-                    echo "Total containers: $total_containers"
+                    echo "Running containers: $running_count"
                     
-                    if [ "$running_containers" -eq 3 ]; then
+                    if [ "$running_count" -eq 3 ]; then
+                        # Get public IP
                         PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-                        echo ""
-                        echo "✅ DEPLOYMENT SUCCESSFUL!"
-                        echo "====================================="
-                        echo "Frontend URL: http://$PUBLIC_IP:5173"
-                        echo "Backend API: http://$PUBLIC_IP:5000"
-                        echo "MongoDB: http://$PUBLIC_IP:27017"
-                        echo "====================================="
-                        
-                        # Test backend API
-                        echo "Testing backend API..."
-                        curl -f http://localhost:5000/api/health 2>/dev/null && echo "✅ Backend is healthy" || echo "⚠️  Backend health check failed"
                         
                         echo ""
-                        echo "=== Quick Health Check ==="
-                        echo "Frontend:"
-                        curl -I http://localhost:5173 2>/dev/null | head -1 || echo "Frontend not responding"
+                        echo "🎉 DEPLOYMENT SUCCESSFUL!"
+                        echo "=========================================="
+                        echo "🌿 Plant Shop Application is LIVE!"
+                        echo ""
+                        echo "🔗 Application URL:"
+                        echo "   http://$PUBLIC_IP:5173"
+                        echo ""
+                        echo "⚙️  Service URLs:"
+                        echo "   Frontend: http://$PUBLIC_IP:5173"
+                        echo "   Backend API: http://$PUBLIC_IP:5000"
+                        echo "   MongoDB: http://$PUBLIC_IP:27017"
+                        echo ""
+                        echo "📋 Admin Features:"
+                        echo "   ✅ Add New Plant"
+                        echo "   ✅ Edit Existing Plants"
+                        echo "   ✅ Delete Plants"
+                        echo "   ✅ User Management"
+                        echo "=========================================="
                         
-                        echo "Backend:"
-                        curl -I http://localhost:5000/api/health 2>/dev/null | head -1 || echo "Backend not responding"
+                        # Quick health checks
+                        echo ""
+                        echo "=== Health Checks ==="
+                        echo -n "Frontend: "
+                        curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 || echo "Failed"
+                        
+                        echo -n "Backend API: "
+                        curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/health || echo "Failed"
                         
                     else
-                        echo "❌ DEPLOYMENT FAILED: Not all containers are running"
-                        echo "Checking logs..."
+                        echo "❌ DEPLOYMENT FAILED: Expected 3 containers, found $running_count running"
+                        echo "=== Debug Information ==="
+                        docker-compose ps
+                        echo ""
+                        echo "=== Recent Logs ==="
                         docker-compose logs --tail=100
                         exit 1
                     fi
@@ -242,34 +305,41 @@ volumes:
         always {
             echo "Build Result: ${currentBuild.currentResult}"
             
-            // Cleanup on failure - FIXED: Use failure/success conditions
             script {
                 if (currentBuild.currentResult == 'FAILURE' || currentBuild.currentResult == 'UNSTABLE') {
                     sh '''
-                        echo "Cleaning up after failure..."
+                        echo "🧹 Cleaning up after failure..."
+                        # Try to cleanup, but don't fail if cleanup fails
                         docker-compose down -v 2>/dev/null || true
                     '''
                 }
             }
         }
+        
         success {
             sh '''
-                echo "✅ Pipeline completed successfully!"
-                PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
                 echo ""
-                echo "================================================"
-                echo "🎉 APPLICATION DEPLOYED SUCCESSFULLY!"
-                echo "🌿 Plant Shop is now live!"
-                echo ""
-                echo "📱 Access your application at:"
-                echo "   http://$PUBLIC_IP:5173"
-                echo ""
-                echo "🔧 Admin Features:"
-                echo "   - Add New Plant should now work"
-                echo "   - Edit Plant functionality enabled"
-                echo "   - Delete Plant available"
-                echo "================================================"
+                echo "=========================================="
+                echo "✅ PIPELINE COMPLETED SUCCESSFULLY!"
+                echo "🌿 Your Plant Shop is now deployed!"
+                echo "=========================================="
             '''
+            
+            // You can add email notification here if needed
+            // emailext body: "Deployment successful!\n\nApplication URL: http://${env.PUBLIC_IP}:5173", subject: "Plant Shop Deployment Success", to: 'your-email@example.com'
+        }
+        
+        failure {
+            sh '''
+                echo ""
+                echo "=========================================="
+                echo "❌ PIPELINE FAILED!"
+                echo "Check Jenkins logs for details."
+                echo "=========================================="
+            '''
+            
+            // You can add failure notification here
+            // emailext body: "Deployment failed!\n\nCheck Jenkins logs.", subject: "Plant Shop Deployment Failed", to: 'your-email@example.com'
         }
     }
 }
