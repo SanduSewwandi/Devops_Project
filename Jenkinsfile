@@ -6,7 +6,6 @@ pipeline {
         DOCKERHUB_USER  = 'sandusewwandi'
         BACKEND_IMAGE  = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE = "${DOCKERHUB_USER}/devops_frontend:latest"
-        WORKSPACE_DIR = pwd()
     }
 
     options {
@@ -24,18 +23,12 @@ pipeline {
                     // Get public IP
                     def publicIp = sh(script: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4", returnStdout: true).trim()
                     echo "=== Detected Public IP: ${publicIp} ==="
-                    
-                    // Save IP for later use
                     env.PUBLIC_IP = publicIp
                     
-                    // Debug: Show workspace permissions
+                    // Remove the existing docker-compose.yml if owned by root
                     sh '''
-                        echo "=== Workspace Information ==="
-                        pwd
-                        ls -la
-                        echo "User: $(whoami)"
-                        echo "UID: $(id -u)"
-                        echo "GID: $(id -g)"
+                        echo "Cleaning up old docker-compose.yml..."
+                        sudo rm -f docker-compose.yml 2>/dev/null || true
                     '''
                 }
             }
@@ -43,11 +36,9 @@ pipeline {
 
         stage('Create Docker Compose') {
             steps {
-                script {
-                    // Create docker-compose.yml in a safe way
-                    sh """
-                        # Create docker-compose.yml content
-                        cat << 'EOF_DOCKER_COMPOSE' > /tmp/docker-compose.yml
+                sh """
+                    # Create docker-compose.yml directly
+                    cat > docker-compose.yml << 'EOF'
 version: '3.8'
 
 services:
@@ -97,20 +88,11 @@ services:
 volumes:
   mongo_data:
   uploads_volume:
-EOF_DOCKER_COMPOSE
-
-                        # Copy to workspace with proper permissions
-                        sudo cp /tmp/docker-compose.yml .
-                        sudo chown jenkins:jenkins docker-compose.yml
-                        sudo chmod 644 docker-compose.yml
-                        
-                        echo "=== Docker Compose File Created ==="
-                        ls -la docker-compose.yml
-                        echo ""
-                        echo "=== Docker Compose Content ==="
-                        cat docker-compose.yml | head -20
-                    """
-                }
+EOF
+                    
+                    echo "=== Docker Compose File Created ==="
+                    ls -la docker-compose.yml
+                """
             }
         }
 
@@ -119,94 +101,13 @@ EOF_DOCKER_COMPOSE
                 sh '''
                     echo "=== Cleaning Previous Deployment ==="
                     
-                    # Stop and remove any existing containers
-                    if [ -f "docker-compose.yml" ]; then
-                        docker-compose down -v --remove-orphans 2>/dev/null || true
-                    fi
-                    
-                    # Clean Docker system
-                    docker system prune -f 2>/dev/null || true
+                    # Clean up using docker commands directly (no docker-compose needed)
+                    docker stop frontend backend mongo 2>/dev/null || true
+                    docker rm frontend backend mongo 2>/dev/null || true
+                    docker volume prune -f 2>/dev/null || true
                     
                     echo "✅ Cleanup completed"
                 '''
-            }
-        }
-
-        stage('Build Images') {
-            steps {
-                sh '''
-                    echo "=== Building Docker Images ==="
-                    
-                    # Try to build, but continue if fails (use existing images)
-                    set +e
-                    
-                    if [ -d "backEnd" ] && [ -f "backEnd/Dockerfile" ]; then
-                        echo "📦 Building backend image..."
-                        cd backEnd
-                        docker build -t ${BACKEND_IMAGE} .
-                        cd ..
-                        echo "✅ Backend image built"
-                    else
-                        echo "⚠️ Backend directory or Dockerfile not found, will use existing image"
-                    fi
-                    
-                    if [ -d "frontEnd" ] && [ -f "frontEnd/Dockerfile" ]; then
-                        echo "📦 Building frontend image..."
-                        cd frontEnd
-                        docker build -t ${FRONTEND_IMAGE} .
-                        cd ..
-                        echo "✅ Frontend image built"
-                    else
-                        echo "⚠️ Frontend directory or Dockerfile not found, will use existing image"
-                    fi
-                    
-                    set -e
-                    echo "=== Build stage completed ==="
-                '''
-            }
-        }
-
-        stage('Push to Docker Hub') {
-            steps {
-                withCredentials([usernamePassword(
-                    credentialsId: "${DOCKERHUB_CREDS}",
-                    usernameVariable: 'DH_USER',
-                    passwordVariable: 'DH_PASS'
-                )]) {
-                    sh '''
-                        echo "=== Pushing to Docker Hub ==="
-                        
-                        # Login to Docker Hub
-                        echo "$DH_PASS" | docker login -u "$DH_USER" --password-stdin
-                        
-                        # Try to push images, but don't fail if they don't exist
-                        set +e
-                        
-                        # Push backend image if it exists
-                        if docker image inspect ${BACKEND_IMAGE} > /dev/null 2>&1; then
-                            echo "⬆️  Pushing backend image..."
-                            docker push ${BACKEND_IMAGE}
-                            echo "✅ Backend image pushed"
-                        else
-                            echo "⚠️ Backend image not found locally, skipping push"
-                        fi
-                        
-                        # Push frontend image if it exists
-                        if docker image inspect ${FRONTEND_IMAGE} > /dev/null 2>&1; then
-                            echo "⬆️  Pushing frontend image..."
-                            docker push ${FRONTEND_IMAGE}
-                            echo "✅ Frontend image pushed"
-                        else
-                            echo "⚠️ Frontend image not found locally, skipping push"
-                        fi
-                        
-                        set -e
-                        
-                        # Logout from Docker Hub
-                        docker logout
-                        echo "=== Push stage completed ==="
-                    '''
-                }
             }
         }
 
@@ -220,7 +121,7 @@ EOF_DOCKER_COMPOSE
                         exit 1
                     fi
                     
-                    echo "🚀 Starting containers..."
+                    echo "🚀 Starting containers with docker-compose..."
                     docker-compose up -d
                     
                     # Wait for containers to start
@@ -229,71 +130,98 @@ EOF_DOCKER_COMPOSE
                     
                     # Show container status
                     echo "=== Container Status ==="
-                    docker-compose ps
+                    docker-compose ps || docker ps --filter "name=frontend\|name=backend\|name=mongo"
                     
                     # Check if containers are running
-                    if docker-compose ps | grep -q "Exit"; then
-                        echo "❌ Some containers have exited!"
-                        echo "=== Container Logs ==="
-                        docker-compose logs --tail=50
-                        exit 1
+                    echo "=== Checking container health ==="
+                    
+                    # Check MongoDB
+                    if docker ps | grep -q mongo; then
+                        echo "✅ MongoDB is running"
+                    else
+                        echo "❌ MongoDB failed to start"
+                        docker logs mongo --tail=20 2>/dev/null || true
                     fi
                     
-                    echo "✅ Deployment completed"
+                    # Check Backend
+                    if docker ps | grep -q backend; then
+                        echo "✅ Backend is running"
+                        # Test backend health
+                        echo "Testing backend API..."
+                        sleep 5
+                        curl -f http://localhost:5000/api/health 2>/dev/null && echo "✅ Backend health check passed" || echo "⚠️ Backend health check failed"
+                    else
+                        echo "❌ Backend failed to start"
+                        docker logs backend --tail=20 2>/dev/null || true
+                    fi
+                    
+                    # Check Frontend
+                    if docker ps | grep -q frontend; then
+                        echo "✅ Frontend is running"
+                    else
+                        echo "❌ Frontend failed to start"
+                        docker logs frontend --tail=20 2>/dev/null || true
+                    fi
                 '''
             }
         }
 
-        stage('Verify Deployment') {
+        stage('Verify & Test') {
             steps {
                 sh '''
-                    echo "=== Verifying Deployment ==="
+                    echo "=== Final Verification ==="
                     
                     # Count running containers
-                    running_count=$(docker-compose ps --services --filter "status=running" 2>/dev/null | wc -l)
+                    running_count=$(docker ps --filter "name=frontend\|name=backend\|name=mongo" --filter "status=running" | grep -v "CONTAINER ID" | wc -l)
                     
-                    echo "Running containers: $running_count"
+                    echo "Running application containers: $running_count/3"
                     
                     if [ "$running_count" -eq 3 ]; then
-                        # Get public IP
-                        PUBLIC_IP=$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4)
-                        
                         echo ""
                         echo "🎉 DEPLOYMENT SUCCESSFUL!"
                         echo "=========================================="
                         echo "🌿 Plant Shop Application is LIVE!"
                         echo ""
                         echo "🔗 Application URL:"
-                        echo "   http://$PUBLIC_IP:5173"
+                        echo "   http://${PUBLIC_IP}:5173"
                         echo ""
                         echo "⚙️  Service URLs:"
-                        echo "   Frontend: http://$PUBLIC_IP:5173"
-                        echo "   Backend API: http://$PUBLIC_IP:5000"
-                        echo "   MongoDB: http://$PUBLIC_IP:27017"
+                        echo "   Frontend: http://${PUBLIC_IP}:5173"
+                        echo "   Backend API: http://${PUBLIC_IP}:5000"
+                        echo "   MongoDB: http://${PUBLIC_IP}:27017"
                         echo ""
-                        echo "📋 Admin Features:"
-                        echo "   ✅ Add New Plant"
-                        echo "   ✅ Edit Existing Plants"
-                        echo "   ✅ Delete Plants"
-                        echo "   ✅ User Management"
+                        echo "📋 IMPORTANT: Add Plant should now work!"
+                        echo "   CORS is configured for: http://${PUBLIC_IP}:5173"
                         echo "=========================================="
                         
-                        # Quick health checks
-                        echo ""
-                        echo "=== Health Checks ==="
-                        echo -n "Frontend: "
-                        curl -s -o /dev/null -w "%{http_code}" http://localhost:5173 || echo "Failed"
+                        # Create a simple test script
+                        cat > test_deployment.sh << 'TEST_EOF'
+#!/bin/bash
+echo "Testing deployment..."
+echo "1. Testing MongoDB..."
+docker exec mongo mongosh --eval "db.version()" 2>/dev/null && echo "✅ MongoDB OK" || echo "❌ MongoDB test failed"
+
+echo "2. Testing Backend API..."
+curl -s http://localhost:5000/api/health && echo "✅ Backend OK" || echo "❌ Backend test failed"
+
+echo "3. Testing Frontend..."
+curl -s -I http://localhost:5173 | head -1 && echo "✅ Frontend OK" || echo "❌ Frontend test failed"
+TEST_EOF
                         
-                        echo -n "Backend API: "
-                        curl -s -o /dev/null -w "%{http_code}" http://localhost:5000/api/health || echo "Failed"
+                        chmod +x test_deployment.sh
+                        ./test_deployment.sh
                         
                     else
                         echo "❌ DEPLOYMENT FAILED: Expected 3 containers, found $running_count running"
                         echo "=== Debug Information ==="
-                        docker-compose ps
+                        docker-compose ps || docker ps -a --filter "name=frontend\|name=backend\|name=mongo"
                         echo ""
                         echo "=== Recent Logs ==="
-                        docker-compose logs --tail=100
+                        docker-compose logs --tail=50 || {
+                            docker logs frontend --tail=20 2>/dev/null || true
+                            docker logs backend --tail=20 2>/dev/null || true
+                            docker logs mongo --tail=20 2>/dev/null || true
+                        }
                         exit 1
                     fi
                 '''
@@ -304,16 +232,6 @@ EOF_DOCKER_COMPOSE
     post {
         always {
             echo "Build Result: ${currentBuild.currentResult}"
-            
-            script {
-                if (currentBuild.currentResult == 'FAILURE' || currentBuild.currentResult == 'UNSTABLE') {
-                    sh '''
-                        echo "🧹 Cleaning up after failure..."
-                        # Try to cleanup, but don't fail if cleanup fails
-                        docker-compose down -v 2>/dev/null || true
-                    '''
-                }
-            }
         }
         
         success {
@@ -323,10 +241,13 @@ EOF_DOCKER_COMPOSE
                 echo "✅ PIPELINE COMPLETED SUCCESSFULLY!"
                 echo "🌿 Your Plant Shop is now deployed!"
                 echo "=========================================="
+                echo ""
+                echo "To access your application:"
+                echo "  Open browser: http://${PUBLIC_IP}:5173"
+                echo ""
+                echo "Admin features (Add/Edit/Delete Plants):"
+                echo "  Should now work with CORS configured!"
             '''
-            
-            // You can add email notification here if needed
-            // emailext body: "Deployment successful!\n\nApplication URL: http://${env.PUBLIC_IP}:5173", subject: "Plant Shop Deployment Success", to: 'your-email@example.com'
         }
         
         failure {
@@ -334,12 +255,18 @@ EOF_DOCKER_COMPOSE
                 echo ""
                 echo "=========================================="
                 echo "❌ PIPELINE FAILED!"
-                echo "Check Jenkins logs for details."
+                echo ""
+                echo "Common issues:"
+                echo "1. Check if docker-compose.yml has correct permissions"
+                echo "2. Verify images exist: ${BACKEND_IMAGE}, ${FRONTEND_IMAGE}"
+                echo "3. Check port conflicts (5000, 5173, 27017)"
                 echo "=========================================="
+                
+                # Try to show what went wrong
+                echo ""
+                echo "=== Last 50 lines of docker-compose logs ==="
+                docker-compose logs --tail=50 2>/dev/null || echo "Could not get logs"
             '''
-            
-            // You can add failure notification here
-            // emailext body: "Deployment failed!\n\nCheck Jenkins logs.", subject: "Plant Shop Deployment Failed", to: 'your-email@example.com'
         }
     }
 }
