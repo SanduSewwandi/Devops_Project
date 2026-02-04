@@ -21,28 +21,35 @@ services:
       - MONGODB_URI=mongodb://mongo:27017/devops
       - NODE_ENV=production
       
-      # Cloudinary (for image uploads)
+      # Cloudinary - BOTH FORMATS (some backends use CLOUDINARY_, some use CLDN_)
+      - CLOUDINARY_CLOUD_NAME=djzjdus1k
+      - CLOUDINARY_API_KEY=823756362343243
+      - CLOUDINARY_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c
+      - CLDN_NAME=djzjdus1k
       - CLDN_API_KEY=823756362343243
       - CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c
-      - CLDN_NAME=djzjdus1k
       
       # Admin
       - ADMIN_EMAIL=admin@plant.com
       - ADMIN_PASS=Admin123
       
-      # CORS Configuration - THIS FIXES ADD PLANT WITH IMAGES
+      # CORS Configuration - CRITICAL FOR IMAGE UPLOADS
       - CORS_ORIGIN=http://localhost:5173,http://54.234.237.10:5173
+      - CORS_CREDENTIALS=true
       
-      # File upload settings
+      # File upload settings - USE /tmp FOR BETTER PERMISSIONS
       - MAX_FILE_SIZE=10485760  # 10MB
-      - UPLOAD_PATH=/app/uploads
+      - UPLOAD_PATH=/tmp/uploads
       
-      # Debug mode (optional)
+      # Debug mode
       - DEBUG=true
       
     volumes:
-      # Mount uploads directory with proper permissions
+      # Primary: Use /tmp/uploads for better permissions
+      - /tmp/uploads:/tmp/uploads
+      # Secondary: Keep /app/uploads for compatibility
       - uploads_volume:/app/uploads
+      # Logs
       - ./logs:/app/logs
       
     depends_on:
@@ -57,11 +64,10 @@ services:
     environment:
       # Frontend API URL
       - VITE_API_URL=http://54.234.237.10:5000
-      - VITE_DEBUG=true
     depends_on:
       - backend
     restart: unless-stopped
 
 volumes:
   mongo_data:
-  uploads_volume:  # Named volume for uploads
+  uploads_volume:
