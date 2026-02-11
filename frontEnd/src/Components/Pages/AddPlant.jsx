@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import "./AddPlant.css";
 
 const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = false }) => {
-  // Initialise form data with proper stock handling
   const [formData, setFormData] = useState({
     plantName: "",
     description: "",
@@ -18,12 +17,9 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
   const [uploading, setUploading] = useState(false);
   const API_URL = import.meta.env.VITE_API_URL || "http://54.234.237.10:5000";
 
-  // Use useEffect to properly initialize form data when initialData changes
   useEffect(() => {
     if (initialData && isEditing) {
-      // Handle both frontend (plantName) and backend (name) field names
       const plantName = initialData.plantName || initialData.name || "";
-      
       setFormData({
         plantName: plantName,
         description: initialData.description || "",
@@ -41,9 +37,8 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
     }
   }, [initialData, isEditing]);
 
-  // handle input change
   const handleInputChange = (e) => {
-    const { name, value, checked, type } = e.target;
+    const { name, value, checked } = e.target;
     
     if (["wateringSchedule", "lightRequirements", "careDifficulty"].includes(name)) {
       setFormData((prev) => ({
@@ -61,11 +56,9 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
       const ratingValue = Math.min(5, Math.max(0, parseFloat(value) || 0));
       setFormData((prev) => ({ ...prev, rating: ratingValue.toString() }));
     } else if (name === "stockQuantity") {
-      // Ensure stock is always a valid number
       const stockValue = Math.max(0, parseInt(value) || 0);
       setFormData((prev) => ({ ...prev, [name]: stockValue.toString() }));
     } else if (name === "price") {
-      // Ensure price is always a valid number with 2 decimal places
       const priceValue = parseFloat(value) || 0;
       setFormData((prev) => ({ ...prev, [name]: priceValue.toFixed(2) }));
     } else {
@@ -82,13 +75,16 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
     setImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // localStorage save
   const handleLocalStorageSubmit = (e) => {
     e.preventDefault();
+    if (uploading) return; // Prevent double click
+    
     if (!formData.plantName || !formData.description || !formData.category) {
       alert("Please fill all required fields.");
       return;
     }
+
+    setUploading(true);
 
     const plantData = {
       id: isEditing && initialData ? (initialData.id || initialData._id) : Date.now(),
@@ -122,74 +118,67 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
 
     if (onSave) onSave(plantData);
     alert(`🌱 Plant ${isEditing ? 'updated' : 'added'} successfully!`);
+    setUploading(false);
     onClose && onClose();
   };
 
-  // API save
   const handleApiSubmit = async (e) => {
     e.preventDefault();
+    
+    // 1. PREVENT DOUBLE SUBMISSION
+    if (uploading) return;
+
     if (!formData.plantName || !formData.description || !formData.category) {
       alert("Please fill all required fields.");
       return;
     }
+
     const token = localStorage.getItem("adminToken");
     if (!token) {
-      alert("Access Denied: Please log in as Admin to add a plant.");
+      alert("Access Denied: Please log in as Admin.");
       return;
     }
+
     setUploading(true);
+
     try {
-      let response, result;
+      const data = new FormData();
+      data.append("name", formData.plantName);
+      data.append("description", formData.description);
+      data.append("price", formData.price);
+      data.append("category", formData.category);
+      data.append("rating", formData.rating);
+      data.append("stockQuantity", formData.stockQuantity);
+      data.append("popular", formData.popular.toString());
+      data.append("care", JSON.stringify(formData.care));
+
+      images.forEach((file, idx) => {
+        if (file instanceof File) {
+          data.append(`image${idx + 1}`, file);
+        }
+      });
+
+      let response;
       if (isEditing && initialData) {
         const plantId = initialData._id || initialData.id;
-        const updateData = new FormData();
-        updateData.append("name", formData.plantName);
-        updateData.append("description", formData.description);
-        updateData.append("price", formData.price);
-        updateData.append("category", formData.category);
-        updateData.append("rating", formData.rating);
-        updateData.append("stockQuantity", formData.stockQuantity);
-        updateData.append("popular", formData.popular.toString());
-        updateData.append("care", JSON.stringify(formData.care));
-        images.forEach((file, idx) => {
-          if (file instanceof File) {
-            updateData.append(`image${idx + 1}`, file);
-          }
-        });
-
         response = await fetch(`${API_URL}/api/plant/update/${plantId}`, {
           method: "PUT",
           headers: { Authorization: `Bearer ${token}` },
-          body: updateData,
+          body: data,
         });
-        result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result?.message || "Update failed");
       } else {
-        const data = new FormData();
-        data.append("name", formData.plantName);
-        data.append("description", formData.description);
-        data.append("price", formData.price);
-        data.append("category", formData.category);
-        data.append("rating", formData.rating);
-        data.append("stockQuantity", formData.stockQuantity);
-        data.append("popular", formData.popular.toString());
-        data.append("care", JSON.stringify(formData.care));
-        images.forEach((file, idx) => {
-          if (file instanceof File) {
-            data.append(`image${idx + 1}`, file);
-          }
-        });
         response = await fetch(`${API_URL}/api/plant/add`, {
           method: "POST",
           headers: { Authorization: `Bearer ${token}` },
           body: data,
         });
-        result = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(result?.message || "Add failed");
       }
 
-      // Build plant for AdminPage
-      const plantForAdminPage = {
+      const result = await response.json();
+      if (!response.ok) throw new Error(result?.message || "Operation failed");
+
+      // 2. CONSTRUCT OBJECT FOR UI
+      const plantForUI = {
         id: result?.plant?._id || result?.plant?.id || initialData?.id || Date.now(),
         plantName: result?.plant?.name || formData.plantName,
         description: result?.plant?.description || formData.description,
@@ -202,26 +191,12 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
         lightRequirements: result?.plant?.care?.light || formData.care.light,
         careDifficulty: result?.plant?.care?.difficulty || formData.care.difficulty,
         images: result?.plant?.images || initialData?.images || [],
-        createdAt: result?.plant?.createdAt || (isEditing && initialData ? initialData.createdAt : new Date().toISOString()),
+        createdAt: result?.plant?.createdAt || (isEditing ? initialData.createdAt : new Date().toISOString()),
         updatedAt: result?.plant?.updatedAt || new Date().toISOString()
       };
 
-      if (onSave) onSave(plantForAdminPage);
-
-      // sync localStorage
-      const existingPlants = JSON.parse(localStorage.getItem('plants') || '[]');
-      let updatedPlants;
-      if (isEditing && initialData) {
-        updatedPlants = existingPlants.map(plant =>
-          (plant.id || plant._id) === (initialData.id || initialData._id)
-            ? plantForAdminPage
-            : plant
-        );
-      } else {
-        updatedPlants = [...existingPlants, plantForAdminPage];
-      }
-      localStorage.setItem('plants', JSON.stringify(updatedPlants));
-      window.dispatchEvent(new Event('storage'));
+      // 3. ONLY CALL ONSAVE (Parent handles state/localstorage sync)
+      if (onSave) onSave(plantForUI);
 
       alert(`🌱 Plant ${isEditing ? 'updated' : 'added'} successfully!`);
       onClose && onClose();
@@ -253,7 +228,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
       <div className="add-plant-container">
         <div className="add-plant-header">
           <h2>{isEditing ? "Edit Plant" : "Add New Plant"}</h2>
-          <button className="close-btn" onClick={onClose}>✕</button>
+          <button className="close-btn" onClick={onClose} disabled={uploading}>✕</button>
         </div>
         <form className="add-plant-form-content" onSubmit={handleSubmit}>
           <div className="form-group">
@@ -265,6 +240,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
               onChange={handleInputChange}
               placeholder="Enter plant name"
               required
+              disabled={uploading}
             />
           </div>
           <div className="form-group">
@@ -276,6 +252,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
               rows="4"
               placeholder="Describe your plant..."
               required
+              disabled={uploading}
             />
           </div>
           <div className="form-row">
@@ -289,6 +266,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
                 step="0.01"
                 min="0"
                 placeholder="0.00"
+                disabled={uploading}
               />
             </div>
             <div className="form-group">
@@ -301,11 +279,12 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
                 min="0"
                 placeholder="10"
                 required
+                disabled={uploading}
               />
             </div>
             <div className="form-group">
               <label>Category *</label>
-              <select name="category" value={formData.category} onChange={handleInputChange} required>
+              <select name="category" value={formData.category} onChange={handleInputChange} required disabled={uploading}>
                 <option value="">Select Category</option>
                 <option value="indoor">Indoor</option>
                 <option value="outdoor">Outdoor</option>
@@ -330,6 +309,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
                   max="5"
                   step="0.1"
                   className="rating-input"
+                  disabled={uploading}
                 />
                 <span className="rating-label">/ 5</span>
               </div>
@@ -340,7 +320,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
             <div className="form-row">
               <div className="form-group">
                 <label>Watering Schedule</label>
-                <select name="wateringSchedule" value={formData.care.water} onChange={handleInputChange}>
+                <select name="wateringSchedule" value={formData.care.water} onChange={handleInputChange} disabled={uploading}>
                   <option value="">Select Schedule</option>
                   <option value="daily">Daily</option>
                   <option value="every-2-days">Every 2 days</option>
@@ -351,7 +331,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
               </div>
               <div className="form-group">
                 <label>Light Requirements</label>
-                <select name="lightRequirements" value={formData.care.light} onChange={handleInputChange}>
+                <select name="lightRequirements" value={formData.care.light} onChange={handleInputChange} disabled={uploading}>
                   <option value="">Select Light</option>
                   <option value="full-sun">Full Sun</option>
                   <option value="partial-sun">Partial Sun</option>
@@ -363,7 +343,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
             </div>
             <div className="form-group">
               <label>Care Difficulty</label>
-              <select name="careDifficulty" value={formData.care.difficulty} onChange={handleInputChange}>
+              <select name="careDifficulty" value={formData.care.difficulty} onChange={handleInputChange} disabled={uploading}>
                 <option value="">Select Difficulty</option>
                 <option value="easy">Easy (Beginner)</option>
                 <option value="moderate">Moderate</option>
@@ -379,6 +359,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
                 name="popular"
                 checked={formData.popular}
                 onChange={handleInputChange}
+                disabled={uploading}
               />
               <span className="checkmark"></span>
               Mark as Popular Plant
@@ -390,6 +371,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
               <div className="file-upload-container">
                 <input
                   type="file"
+                  name="images"
                   accept="image/*"
                   multiple
                   onChange={handleFileChange}
@@ -406,7 +388,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
                   {images.map((img, idx) => (
                     <div key={idx} className="image-preview-item">
                       <span className="image-name">{img.name}</span>
-                      <button type="button" onClick={() => removeImage(idx)} className="remove-image">
+                      <button type="button" onClick={() => removeImage(idx)} className="remove-image" disabled={uploading}>
                         ✕
                       </button>
                     </div>
@@ -416,7 +398,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
             </div>
           )}
           <div className="add-plant-footer">
-            <button type="button" className="cancel-btn" onClick={onClose}>Cancel</button>
+            <button type="button" className="cancel-btn" onClick={onClose} disabled={uploading}>Cancel</button>
             <button type="submit" className="submit-btn" disabled={uploading}>
               {uploading ? "Processing..." : (isEditing ? "Update Plant" : "Save Plant")}
             </button>
