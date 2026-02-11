@@ -2,7 +2,6 @@ import React, { useState, useEffect } from "react";
 import "./AddPlant.css";
 
 const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = false }) => {
-  // Initialise form data with proper stock handling
   const [formData, setFormData] = useState({
     plantName: "",
     description: "",
@@ -18,12 +17,9 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
   const [uploading, setUploading] = useState(false);
   const API_URL = import.meta.env.VITE_API_URL || "http://54.234.237.10:5000";
 
-  // Use useEffect to properly initialize form data when initialData changes
   useEffect(() => {
     if (initialData && isEditing) {
-      // Handle both frontend (plantName) and backend (name) field names
       const plantName = initialData.plantName || initialData.name || "";
-      
       setFormData({
         plantName: plantName,
         description: initialData.description || "",
@@ -41,9 +37,8 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
     }
   }, [initialData, isEditing]);
 
-  // handle input change
   const handleInputChange = (e) => {
-    const { name, value, checked, type } = e.target;
+    const { name, value, checked } = e.target;
     
     if (["wateringSchedule", "lightRequirements", "careDifficulty"].includes(name)) {
       setFormData((prev) => ({
@@ -61,11 +56,9 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
       const ratingValue = Math.min(5, Math.max(0, parseFloat(value) || 0));
       setFormData((prev) => ({ ...prev, rating: ratingValue.toString() }));
     } else if (name === "stockQuantity") {
-      // Ensure stock is always a valid number
       const stockValue = Math.max(0, parseInt(value) || 0);
       setFormData((prev) => ({ ...prev, [name]: stockValue.toString() }));
     } else if (name === "price") {
-      // Ensure price is always a valid number with 2 decimal places
       const priceValue = parseFloat(value) || 0;
       setFormData((prev) => ({ ...prev, [name]: priceValue.toFixed(2) }));
     } else {
@@ -82,7 +75,6 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
     setImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  // localStorage save
   const handleLocalStorageSubmit = (e) => {
     e.preventDefault();
     if (!formData.plantName || !formData.description || !formData.category) {
@@ -125,7 +117,6 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
     onClose && onClose();
   };
 
-  // API save
   const handleApiSubmit = async (e) => {
     e.preventDefault();
     if (!formData.plantName || !formData.description || !formData.category) {
@@ -134,63 +125,54 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
     }
     const token = localStorage.getItem("adminToken");
     if (!token) {
-      alert("Access Denied: Please log in as Admin to add a plant.");
+      alert("Access Denied: Please log in as Admin.");
       return;
     }
+    
     setUploading(true);
-    try {
-      let response, result;
-      if (isEditing && initialData) {
-        const plantId = initialData._id || initialData.id;
-        const updateData = new FormData();
-        updateData.append("name", formData.plantName);
-        updateData.append("description", formData.description);
-        updateData.append("price", formData.price);
-        updateData.append("category", formData.category);
-        updateData.append("rating", formData.rating);
-        updateData.append("stockQuantity", formData.stockQuantity);
-        updateData.append("popular", formData.popular.toString());
-        updateData.append("care", JSON.stringify(formData.care));
-        images.forEach((file, idx) => {
-          if (file instanceof File) {
-            updateData.append(`image${idx + 1}`, file);
-          }
-        });
 
-        response = await fetch(`${API_URL}/api/plant/update/${plantId}`, {
-          method: "PUT",
-          headers: { Authorization: `Bearer ${token}` },
-          body: updateData,
-        });
-        result = await response.json().catch(() => ({}));
-        if (!response.ok) throw new Error(result?.message || "Update failed");
-      } else {
-        const data = new FormData();
-        data.append("name", formData.plantName);
-        data.append("description", formData.description);
-        data.append("price", formData.price);
-        data.append("category", formData.category);
-        data.append("rating", formData.rating);
-        data.append("stockQuantity", formData.stockQuantity);
-        data.append("popular", formData.popular.toString());
-        data.append("care", JSON.stringify(formData.care));
-        images.forEach((file, idx) => {
-          if (file instanceof File) {
-            data.append(`image${idx + 1}`, file);
-          }
-        });
-        response = await fetch(`${API_URL}/api/plant/add`, {
-          method: "POST",
-          headers: { Authorization: `Bearer ${token}` },
-          body: data,
-        });
-        result = await response.json().catch(() => null);
-        if (!response.ok) throw new Error(result?.message || "Add failed");
+    try {
+      const data = new FormData();
+      // Backend expects 'name', not 'plantName'
+      data.append("name", formData.plantName);
+      data.append("description", formData.description);
+      data.append("price", formData.price);
+      data.append("category", formData.category);
+      data.append("rating", formData.rating);
+      data.append("stockQuantity", formData.stockQuantity);
+      data.append("popular", formData.popular.toString());
+      
+      // Sending care info as flattened fields is safer than JSON strings for many backends
+      data.append("wateringSchedule", formData.care.water);
+      data.append("lightRequirements", formData.care.light);
+      data.append("careDifficulty", formData.care.difficulty);
+
+      // Standardize image key to 'images' for array uploads
+      images.forEach((file) => {
+        if (file instanceof File) {
+          data.append("images", file);
+        }
+      });
+
+      const url = isEditing && initialData 
+        ? `${API_URL}/api/plant/update/${initialData._id || initialData.id}`
+        : `${API_URL}/api/plant/add`;
+
+      const response = await fetch(url, {
+        method: isEditing ? "PUT" : "POST",
+        headers: { Authorization: `Bearer ${token}` },
+        body: data,
+      });
+
+      const result = await response.json().catch(() => ({}));
+
+      if (!response.ok) {
+        throw new Error(result?.message || "Server Error: Operation failed");
       }
 
-      // Build plant for AdminPage
-      const plantForAdminPage = {
-        id: result?.plant?._id || result?.plant?.id || initialData?.id || Date.now(),
+      // Format data for the parent component to display immediately
+      const savedPlant = {
+        id: result?.plant?._id || result?.plant?.id || Date.now(),
         plantName: result?.plant?.name || formData.plantName,
         description: result?.plant?.description || formData.description,
         price: result?.plant?.price || formData.price,
@@ -202,31 +184,14 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
         lightRequirements: result?.plant?.care?.light || formData.care.light,
         careDifficulty: result?.plant?.care?.difficulty || formData.care.difficulty,
         images: result?.plant?.images || initialData?.images || [],
-        createdAt: result?.plant?.createdAt || (isEditing && initialData ? initialData.createdAt : new Date().toISOString()),
-        updatedAt: result?.plant?.updatedAt || new Date().toISOString()
+        createdAt: result?.plant?.createdAt || new Date().toISOString()
       };
 
-      if (onSave) onSave(plantForAdminPage);
-
-      // sync localStorage
-      const existingPlants = JSON.parse(localStorage.getItem('plants') || '[]');
-      let updatedPlants;
-      if (isEditing && initialData) {
-        updatedPlants = existingPlants.map(plant =>
-          (plant.id || plant._id) === (initialData.id || initialData._id)
-            ? plantForAdminPage
-            : plant
-        );
-      } else {
-        updatedPlants = [...existingPlants, plantForAdminPage];
-      }
-      localStorage.setItem('plants', JSON.stringify(updatedPlants));
-      window.dispatchEvent(new Event('storage'));
-
+      if (onSave) onSave(savedPlant);
       alert(`🌱 Plant ${isEditing ? 'updated' : 'added'} successfully!`);
       onClose && onClose();
     } catch (err) {
-      console.error(err);
+      console.error("Submission Error:", err);
       alert(err.message);
     } finally {
       setUploading(false);
@@ -242,6 +207,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
         key={i}
         className={`star ${i + 1 <= rating ? 'filled' : ''}`}
         onClick={() => setFormData(prev => ({ ...prev, rating: (i + 1).toString() }))}
+        style={{ cursor: 'pointer' }}
       >
         ⭐
       </span>
@@ -288,7 +254,6 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
                 onChange={handleInputChange}
                 step="0.01"
                 min="0"
-                placeholder="0.00"
               />
             </div>
             <div className="form-group">
@@ -299,7 +264,6 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
                 value={formData.stockQuantity}
                 onChange={handleInputChange}
                 min="0"
-                placeholder="10"
                 required
               />
             </div>
@@ -316,6 +280,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
               </select>
             </div>
           </div>
+          
           <div className="rating-section">
             <h3>Rating</h3>
             <div className="rating-container">
@@ -335,6 +300,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
               </div>
             </div>
           </div>
+
           <div className="care-info-section">
             <h3>Care Information</h3>
             <div className="form-row">
@@ -372,6 +338,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
               </select>
             </div>
           </div>
+
           <div className="form-group checkbox-group">
             <label className="checkbox-label">
               <input
@@ -384,12 +351,14 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
               Mark as Popular Plant
             </label>
           </div>
+
           {!isLocalStorage && (
             <div className="plant-images-section">
               <h3>Images (up to 4)</h3>
               <div className="file-upload-container">
                 <input
                   type="file"
+                  name="images"
                   accept="image/*"
                   multiple
                   onChange={handleFileChange}
@@ -415,6 +384,7 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
               )}
             </div>
           )}
+
           <div className="add-plant-footer">
             <button type="button" className="cancel-btn" onClick={onClose}>Cancel</button>
             <button type="submit" className="submit-btn" disabled={uploading}>
