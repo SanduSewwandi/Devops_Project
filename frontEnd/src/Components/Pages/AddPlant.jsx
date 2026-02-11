@@ -39,7 +39,6 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
 
   const handleInputChange = (e) => {
     const { name, value, checked } = e.target;
-    
     if (["wateringSchedule", "lightRequirements", "careDifficulty"].includes(name)) {
       setFormData((prev) => ({
         ...prev,
@@ -75,54 +74,8 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
     setImages((prev) => prev.filter((_, i) => i !== index));
   };
 
-  const handleLocalStorageSubmit = (e) => {
-    e.preventDefault();
-    if (!formData.plantName || !formData.description || !formData.category) {
-      alert("Please fill all required fields.");
-      return;
-    }
-
-    const plantData = {
-      id: isEditing && initialData ? (initialData.id || initialData._id) : Date.now(),
-      plantName: formData.plantName,
-      description: formData.description,
-      price: formData.price,
-      category: formData.category,
-      rating: formData.rating,
-      stockQuantity: formData.stockQuantity,
-      isPopular: formData.popular,
-      wateringSchedule: formData.care.water,
-      lightRequirements: formData.care.light,
-      careDifficulty: formData.care.difficulty,
-      images: initialData?.images || [],
-      createdAt: isEditing && initialData ? initialData.createdAt : new Date().toISOString(),
-      updatedAt: new Date().toISOString()
-    };
-
-    const existingPlants = JSON.parse(localStorage.getItem('plants') || '[]');
-    let updatedPlants;
-    if (isEditing && initialData) {
-      updatedPlants = existingPlants.map(plant =>
-        (plant.id || plant._id) === plantData.id ? plantData : plant
-      );
-    } else {
-      updatedPlants = [...existingPlants, plantData];
-    }
-
-    localStorage.setItem('plants', JSON.stringify(updatedPlants));
-    window.dispatchEvent(new Event('storage'));
-
-    if (onSave) onSave(plantData);
-    alert(`🌱 Plant ${isEditing ? 'updated' : 'added'} successfully!`);
-    onClose && onClose();
-  };
-
   const handleApiSubmit = async (e) => {
     e.preventDefault();
-    if (!formData.plantName || !formData.description || !formData.category) {
-      alert("Please fill all required fields.");
-      return;
-    }
     const token = localStorage.getItem("adminToken");
     if (!token) {
       alert("Access Denied: Please log in as Admin.");
@@ -133,7 +86,6 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
 
     try {
       const data = new FormData();
-      // Backend expects 'name', not 'plantName'
       data.append("name", formData.plantName);
       data.append("description", formData.description);
       data.append("price", formData.price);
@@ -142,15 +94,19 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
       data.append("stockQuantity", formData.stockQuantity);
       data.append("popular", formData.popular.toString());
       
-      // Sending care info as flattened fields is safer than JSON strings for many backends
+      /** * CRITICAL FIX: 
+       * Do NOT use JSON.stringify(formData.care). 
+       * Your backend controller expects an object, and multipart/form-data 
+       * sends strings. We send individual fields that match your schema.
+       */
       data.append("wateringSchedule", formData.care.water);
       data.append("lightRequirements", formData.care.light);
       data.append("careDifficulty", formData.care.difficulty);
 
-      // Standardize image key to 'images' for array uploads
-      images.forEach((file) => {
+      // Matches your plantRouter.post name requirements: image1, image2, etc.
+      images.forEach((file, idx) => {
         if (file instanceof File) {
-          data.append("images", file);
+          data.append(`image${idx + 1}`, file);
         }
       });
 
@@ -164,54 +120,21 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
         body: data,
       });
 
-      const result = await response.json().catch(() => ({}));
+      const result = await response.json();
 
       if (!response.ok) {
-        throw new Error(result?.message || "Server Error: Operation failed");
+        throw new Error(result.message || "Server Error");
       }
 
-      // Format data for the parent component to display immediately
-      const savedPlant = {
-        id: result?.plant?._id || result?.plant?.id || Date.now(),
-        plantName: result?.plant?.name || formData.plantName,
-        description: result?.plant?.description || formData.description,
-        price: result?.plant?.price || formData.price,
-        category: result?.plant?.category || formData.category,
-        rating: result?.plant?.rating || formData.rating,
-        stockQuantity: result?.plant?.stockQuantity || formData.stockQuantity,
-        isPopular: result?.plant?.popular || formData.popular,
-        wateringSchedule: result?.plant?.care?.water || formData.care.water,
-        lightRequirements: result?.plant?.care?.light || formData.care.light,
-        careDifficulty: result?.plant?.care?.difficulty || formData.care.difficulty,
-        images: result?.plant?.images || initialData?.images || [],
-        createdAt: result?.plant?.createdAt || new Date().toISOString()
-      };
-
-      if (onSave) onSave(savedPlant);
+      if (onSave) onSave(result.plant);
       alert(`🌱 Plant ${isEditing ? 'updated' : 'added'} successfully!`);
-      onClose && onClose();
+      onClose();
     } catch (err) {
-      console.error("Submission Error:", err);
+      console.error("Submit Error:", err);
       alert(err.message);
     } finally {
       setUploading(false);
     }
-  };
-
-  const handleSubmit = isLocalStorage ? handleLocalStorageSubmit : handleApiSubmit;
-
-  const renderStarRating = () => {
-    const rating = parseFloat(formData.rating) || 0;
-    return Array.from({ length: 5 }, (_, i) => (
-      <span
-        key={i}
-        className={`star ${i + 1 <= rating ? 'filled' : ''}`}
-        onClick={() => setFormData(prev => ({ ...prev, rating: (i + 1).toString() }))}
-        style={{ cursor: 'pointer' }}
-      >
-        ⭐
-      </span>
-    ));
   };
 
   return (
@@ -221,51 +144,23 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
           <h2>{isEditing ? "Edit Plant" : "Add New Plant"}</h2>
           <button className="close-btn" onClick={onClose}>✕</button>
         </div>
-        <form className="add-plant-form-content" onSubmit={handleSubmit}>
+        <form className="add-plant-form-content" onSubmit={handleApiSubmit}>
           <div className="form-group">
             <label>Plant Name *</label>
-            <input
-              type="text"
-              name="plantName"
-              value={formData.plantName}
-              onChange={handleInputChange}
-              placeholder="Enter plant name"
-              required
-            />
+            <input type="text" name="plantName" value={formData.plantName} onChange={handleInputChange} required />
           </div>
           <div className="form-group">
             <label>Description *</label>
-            <textarea
-              name="description"
-              value={formData.description}
-              onChange={handleInputChange}
-              rows="4"
-              placeholder="Describe your plant..."
-              required
-            />
+            <textarea name="description" value={formData.description} onChange={handleInputChange} rows="4" required />
           </div>
           <div className="form-row">
             <div className="form-group">
               <label>Price (Rs.)</label>
-              <input
-                type="number"
-                name="price"
-                value={formData.price}
-                onChange={handleInputChange}
-                step="0.01"
-                min="0"
-              />
+              <input type="number" name="price" value={formData.price} onChange={handleInputChange} step="0.01" />
             </div>
             <div className="form-group">
               <label>Stock Quantity *</label>
-              <input
-                type="number"
-                name="stockQuantity"
-                value={formData.stockQuantity}
-                onChange={handleInputChange}
-                min="0"
-                required
-              />
+              <input type="number" name="stockQuantity" value={formData.stockQuantity} onChange={handleInputChange} required />
             </div>
             <div className="form-group">
               <label>Category *</label>
@@ -274,122 +169,48 @@ const AddPlant = ({ onClose, onSave, initialData, isEditing, isLocalStorage = fa
                 <option value="indoor">Indoor</option>
                 <option value="outdoor">Outdoor</option>
                 <option value="succulents">Succulents</option>
-                <option value="flowering">Flowering</option>
-                <option value="herbs">Herbs</option>
-                <option value="trees">Trees</option>
               </select>
             </div>
           </div>
           
-          <div className="rating-section">
-            <h3>Rating</h3>
-            <div className="rating-container">
-              <div className="star-rating">{renderStarRating()}</div>
-              <div className="rating-input-group">
-                <input
-                  type="number"
-                  name="rating"
-                  value={formData.rating}
-                  onChange={handleInputChange}
-                  min="0"
-                  max="5"
-                  step="0.1"
-                  className="rating-input"
-                />
-                <span className="rating-label">/ 5</span>
-              </div>
-            </div>
-          </div>
-
           <div className="care-info-section">
             <h3>Care Information</h3>
             <div className="form-row">
               <div className="form-group">
-                <label>Watering Schedule</label>
+                <label>Watering</label>
                 <select name="wateringSchedule" value={formData.care.water} onChange={handleInputChange}>
-                  <option value="">Select Schedule</option>
+                  <option value="">Select</option>
                   <option value="daily">Daily</option>
-                  <option value="every-2-days">Every 2 days</option>
                   <option value="weekly">Weekly</option>
-                  <option value="bi-weekly">Bi-weekly</option>
-                  <option value="monthly">Monthly</option>
                 </select>
               </div>
               <div className="form-group">
-                <label>Light Requirements</label>
+                <label>Light</label>
                 <select name="lightRequirements" value={formData.care.light} onChange={handleInputChange}>
-                  <option value="">Select Light</option>
+                  <option value="">Select</option>
                   <option value="full-sun">Full Sun</option>
-                  <option value="partial-sun">Partial Sun</option>
                   <option value="shade">Shade</option>
-                  <option value="indirect-light">Indirect Light</option>
-                  <option value="low-light">Low Light</option>
                 </select>
               </div>
             </div>
-            <div className="form-group">
-              <label>Care Difficulty</label>
-              <select name="careDifficulty" value={formData.care.difficulty} onChange={handleInputChange}>
-                <option value="">Select Difficulty</option>
-                <option value="easy">Easy (Beginner)</option>
-                <option value="moderate">Moderate</option>
-                <option value="difficult">Difficult</option>
-                <option value="expert">Expert Only</option>
-              </select>
-            </div>
           </div>
 
-          <div className="form-group checkbox-group">
-            <label className="checkbox-label">
-              <input
-                type="checkbox"
-                name="popular"
-                checked={formData.popular}
-                onChange={handleInputChange}
-              />
-              <span className="checkmark"></span>
-              Mark as Popular Plant
-            </label>
-          </div>
-
-          {!isLocalStorage && (
-            <div className="plant-images-section">
-              <h3>Images (up to 4)</h3>
-              <div className="file-upload-container">
-                <input
-                  type="file"
-                  name="images"
-                  accept="image/*"
-                  multiple
-                  onChange={handleFileChange}
-                  disabled={uploading}
-                  className="file-input"
-                  id="plant-images"
-                />
-                <label htmlFor="plant-images" className="file-upload-label">
-                  📷 Choose Images
-                </label>
-              </div>
-              {images.length > 0 && (
-                <div className="images-preview">
-                  {images.map((img, idx) => (
-                    <div key={idx} className="image-preview-item">
-                      <span className="image-name">{img.name}</span>
-                      <button type="button" onClick={() => removeImage(idx)} className="remove-image">
-                        ✕
-                      </button>
-                    </div>
-                  ))}
+          <div className="plant-images-section">
+            <h3>Images (up to 4)</h3>
+            <input type="file" accept="image/*" multiple onChange={handleFileChange} disabled={uploading} />
+            <div className="images-preview">
+              {images.map((img, idx) => (
+                <div key={idx} className="image-preview-item">
+                  <span>{img.name}</span>
+                  <button type="button" onClick={() => removeImage(idx)}>✕</button>
                 </div>
-              )}
+              ))}
             </div>
-          )}
+          </div>
 
           <div className="add-plant-footer">
-            <button type="button" className="cancel-btn" onClick={onClose}>Cancel</button>
-            <button type="submit" className="submit-btn" disabled={uploading}>
-              {uploading ? "Processing..." : (isEditing ? "Update Plant" : "Save Plant")}
-            </button>
+            <button type="button" onClick={onClose}>Cancel</button>
+            <button type="submit" disabled={uploading}>{uploading ? "Uploading..." : "Save Plant"}</button>
           </div>
         </form>
       </div>
