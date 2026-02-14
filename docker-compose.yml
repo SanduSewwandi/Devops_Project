@@ -14,28 +14,22 @@ services:
     ports:
       - "5000:5000"
     environment:
-      JWT_SECRET: "dummysecret"
+      # Matches your .env variable names exactly
       MONGODB_URI: "mongodb://mongo:27017/devops"
-      NODE_ENV: "production"
-      
-      # Cloudinary Config
-      CLOUDINARY_CLOUD_NAME: "djzjdus1k"
-      CLOUDINARY_API_KEY: "823756362343243"
-      CLOUDINARY_API_SECRET: "FwkT9WUwifSXJn-Mev1-2gpvw5c"
-
-      # Admin
+      CLDN_NAME: "djzjdus1k"
+      CLDN_API_KEY: "823756362343243"
+      CLDN_API_SECRET: "FwkT9WUwifSXJn-Mev1-2gpvw5c"
+      JWT_SECRET: "dummysecret"
       ADMIN_EMAIL: "admin@plant.com"
       ADMIN_PASS: "Admin123"
-
-      # CORS
+      
+      # Networking & Uploads
+      PUBLIC_IP: "${PUBLIC_IP}"
+      VITE_API_URL: "http://${PUBLIC_IP}:5000"
       CORS_ORIGIN: "http://localhost:5173,http://${PUBLIC_IP}:5173"
-      ALLOWED_ORIGINS: "http://localhost:5173,http://${PUBLIC_IP}:5173"
-
-      # Storage (Matches the internal folder we fixed in Jenkins)
       UPLOAD_PATH: "/app/uploads"
       FILE_UPLOAD_DEST: "/app/uploads"
-      MAX_FILE_SIZE: 15728640
-
+      NODE_ENV: "production"
     volumes:
       - uploads_data:/app/uploads
       - ./logs:/app/logs
