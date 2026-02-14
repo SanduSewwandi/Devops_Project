@@ -5,8 +5,6 @@ services:
   mongo:
     image: mongo:6
     container_name: mongo
-    ports:
-      - "27017:27017"
     volumes:
       - mongo_data:/data/db
     restart: unless-stopped
@@ -15,7 +13,6 @@ services:
   backend:
     image: sandusewwandi/devops_backend:latest
     container_name: backend
-
     ports:
       - "5000:5000"
 
@@ -32,32 +29,36 @@ services:
       ADMIN_PASS: Admin123
 
       CORS_ORIGIN: http://localhost:5173,http://${PUBLIC_IP}:5173
-      MAX_FILE_SIZE: 10485760
-      UPLOAD_PATH: /tmp/uploads
+      ALLOWED_ORIGINS: http://localhost:5173,http://${PUBLIC_IP}:5173
+
+      MAX_FILE_SIZE: 15728640
+      UPLOAD_PATH: /uploads
+      FILE_UPLOAD_DEST: /uploads
+
+      DEBUG: express:*
+      LOG_LEVEL: debug
 
     volumes:
-      - uploads_data:/tmp/uploads
+      - uploads_data:/uploads
       - ./logs:/app/logs
 
     depends_on:
       - mongo
-
     restart: unless-stopped
 
 
   frontend:
     image: sandusewwandi/devops_frontend:latest
     container_name: frontend
-
     ports:
       - "5173:5173"
 
     environment:
       VITE_API_URL: http://${PUBLIC_IP}:5000
+      VITE_API_BASE_URL: http://${PUBLIC_IP}:5000/api
 
     depends_on:
       - backend
-
     restart: unless-stopped
 
 

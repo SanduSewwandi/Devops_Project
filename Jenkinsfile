@@ -4,13 +4,8 @@ pipeline {
     environment {
         DOCKERHUB_CREDS = 'plantcredentials'
         DOCKERHUB_USER  = 'sandusewwandi'
-
         BACKEND_IMAGE  = "${DOCKERHUB_USER}/devops_backend:latest"
         FRONTEND_IMAGE = "${DOCKERHUB_USER}/devops_frontend:latest"
-    }
-
-    options {
-        timeout(time: 30, unit: 'MINUTES')
     }
 
     stages {
@@ -28,29 +23,20 @@ pipeline {
                         script: "curl -s http://169.254.169.254/latest/meta-data/public-ipv4 || echo localhost",
                         returnStdout: true
                     ).trim()
-
-                    echo "Public IP = ${env.PUBLIC_IP}"
                 }
             }
         }
 
-        stage('Clean Old Containers') {
+        stage('Clean') {
             steps {
-                sh '''
-                    echo "Cleaning old containers..."
-                    docker-compose down -v --remove-orphans 2>/dev/null || true
-                    docker system prune -f || true
-                '''
+                sh 'docker-compose down -v --remove-orphans || true'
             }
         }
 
         stage('Build Images') {
             steps {
                 sh '''
-                    echo "Building backend image..."
                     docker build -t ${BACKEND_IMAGE} ./backEnd
-
-                    echo "Building frontend image..."
                     docker build -t ${FRONTEND_IMAGE} ./frontEnd
                 '''
             }
@@ -73,43 +59,14 @@ pipeline {
             }
         }
 
-        stage('Deploy (docker-compose)') {
+        stage('Deploy') {
             steps {
                 sh '''
-                    echo "Starting services using existing docker-compose.yml..."
-
-                    PUBLIC_IP=${PUBLIC_IP} docker-compose up -d --force-recreate
-
-                    sleep 25
+                    export PUBLIC_IP=${PUBLIC_IP}
+                    docker-compose up -d --force-recreate
                     docker-compose ps
                 '''
             }
-        }
-
-        stage('Health Check') {
-            steps {
-                sh '''
-                    echo "Testing backend..."
-                    curl -I http://${PUBLIC_IP}:5000 || true
-
-                    echo "Testing frontend..."
-                    curl -I http://${PUBLIC_IP}:5173 || true
-                '''
-            }
-        }
-    }
-
-    post {
-        success {
-            echo "======================================"
-            echo " Deployment Successful"
-            echo " Frontend → http://${env.PUBLIC_IP}:5173"
-            echo " Backend  → http://${env.PUBLIC_IP}:5000"
-            echo "======================================"
-        }
-
-        always {
-            sh 'docker-compose ps || true'
         }
     }
 }
