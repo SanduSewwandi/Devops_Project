@@ -38,6 +38,7 @@ export default function AdminPage() {
   const [loading, setLoading] = useState(false)
   const [forceUpdate, setForceUpdate] = useState(0)
   const [useLocalStorage, setUseLocalStorage] = useState(false)
+  const [isSubmitting, setIsSubmitting] = useState(false) // Prevent double submission
 
   // Function to process plant image URL
   const getPlantImageUrl = (plant) => {
@@ -78,9 +79,12 @@ export default function AdminPage() {
         const data = await response.json();
         const plantsData = data.plants || data.data || [];
         
+        // Remove any potential duplicates by ID
+        const uniquePlants = removeDuplicates(plantsData);
+        
         // Update state and localStorage with backend data
-        setPlants(plantsData);
-        localStorage.setItem('plants', JSON.stringify(plantsData));
+        setPlants(uniquePlants);
+        localStorage.setItem('plants', JSON.stringify(uniquePlants));
         setUseLocalStorage(false);
       } else {
         // Fallback to localStorage if backend fails
@@ -94,7 +98,8 @@ export default function AdminPage() {
         const storedPlants = localStorage.getItem('plants');
         if (storedPlants) {
           const parsedPlants = JSON.parse(storedPlants);
-          setPlants(parsedPlants);
+          const uniquePlants = removeDuplicates(parsedPlants);
+          setPlants(uniquePlants);
         } else {
           // Initialize with empty array if no plants exist
           setPlants([]);
@@ -107,6 +112,19 @@ export default function AdminPage() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Helper function to remove duplicates based on ID
+  const removeDuplicates = (plantArray) => {
+    const seen = new Set();
+    return plantArray.filter(plant => {
+      const plantId = plant._id || plant.id;
+      if (seen.has(plantId)) {
+        return false;
+      }
+      seen.add(plantId);
+      return true;
+    });
   };
 
   // Initial load - only once on component mount
@@ -162,6 +180,11 @@ export default function AdminPage() {
 
   // Handle adding new plant
   const handleAddPlant = async (plantData) => {
+    // Prevent double submission
+    if (isSubmitting) return;
+    
+    setIsSubmitting(true);
+    
     try {
       console.log('Plant data received in handleAddPlant:', plantData);
       
@@ -169,18 +192,31 @@ export default function AdminPage() {
         // Use local storage
         const existingPlants = JSON.parse(localStorage.getItem('plants') || '[]');
         
+        // Check if plant with same name already exists (optional)
+        const existingPlant = existingPlants.find(p => 
+          p.name?.toLowerCase() === (plantData.plantName || plantData.name)?.toLowerCase()
+        );
+        
+        if (existingPlant) {
+          if (!window.confirm('A plant with this name already exists. Do you want to add another one?')) {
+            setIsSubmitting(false);
+            return;
+          }
+        }
+        
         // Create a new plant object with a unique ID
         const newPlant = {
           ...plantData,
           id: Date.now(), // Simple unique ID for local storage
-          dateAdded: new Date().toISOString()
+          dateAdded: new Date().toISOString(),
+          // Ensure image is properly stored
+          images: plantData.images || []
         };
         
         const updatedPlants = [...existingPlants, newPlant];
         setPlants(updatedPlants);
         localStorage.setItem('plants', JSON.stringify(updatedPlants));
         setShowAddPlant(false);
-        setForceUpdate(prev => prev + 1);
         alert('Plant added successfully to local storage!');
         return;
       }
@@ -189,6 +225,7 @@ export default function AdminPage() {
       const token = localStorage.getItem("adminToken");
       if (!token) {
         alert("Please login as admin first");
+        setIsSubmitting(false);
         return;
       }
 
@@ -207,7 +244,7 @@ export default function AdminPage() {
         difficulty: plantData.careDifficulty || plantData.care?.difficulty || 'easy'
       }));
 
-      // Handle images
+      // Handle images - only append if there's an image
       if (plantData.images && plantData.images.length > 0) {
         if (typeof plantData.images[0] === 'string') {
           // Base64 string
@@ -231,7 +268,7 @@ export default function AdminPage() {
         console.log('Plant added to backend:', newPlant);
         
         // Refresh plants from backend to ensure consistency
-        setForceUpdate(prev => prev + 1);
+        await loadPlants(); // Wait for plants to load
         setShowAddPlant(false);
         alert('Plant added successfully!');
         return;
@@ -243,6 +280,8 @@ export default function AdminPage() {
     } catch (error) {
       console.error('Error adding plant:', error);
       alert('Failed to add plant. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -266,6 +305,11 @@ export default function AdminPage() {
 
   // Handle updating plant
   const handleUpdatePlant = async (plantData) => {
+    // Prevent double submission
+    if (isSubmitting) return;
+    
+    setIsSubmitting(true);
+    
     try {
       console.log('Plant data received in handleUpdatePlant:', plantData);
       
@@ -278,7 +322,8 @@ export default function AdminPage() {
                 ...plantData,
                 id: editingPlant?.id || plant.id,
                 _id: editingPlant?._id || plant._id,
-                dateAdded: plant.dateAdded || new Date().toISOString()
+                dateAdded: plant.dateAdded || new Date().toISOString(),
+                images: plantData.images || plant.images || []
               }
             : plant
         );
@@ -287,7 +332,6 @@ export default function AdminPage() {
         localStorage.setItem('plants', JSON.stringify(updatedPlants));
         setShowAddPlant(false);
         setEditingPlant(null);
-        setForceUpdate(prev => prev + 1);
         alert('Plant updated successfully in local storage!');
         return;
       }
@@ -296,6 +340,7 @@ export default function AdminPage() {
       const token = localStorage.getItem("adminToken");
       if (!token) {
         alert("Please login as admin first");
+        setIsSubmitting(false);
         return;
       }
 
@@ -338,7 +383,7 @@ export default function AdminPage() {
         console.log("Plant updated on server:", updatedPlant);
         
         // Refresh plants from backend
-        setForceUpdate(prev => prev + 1);
+        await loadPlants(); // Wait for plants to load
         setShowAddPlant(false);
         setEditingPlant(null);
         alert('Plant updated successfully!');
@@ -351,6 +396,8 @@ export default function AdminPage() {
     } catch (error) {
       console.error('Error updating plant:', error);
       alert('Failed to update plant. Please try again.');
+    } finally {
+      setIsSubmitting(false);
     }
   };
 
@@ -365,7 +412,6 @@ export default function AdminPage() {
           const updatedPlants = plants.filter((plant) => (plant._id || plant.id) !== plantId);
           setPlants(updatedPlants);
           localStorage.setItem("plants", JSON.stringify(updatedPlants));
-          setForceUpdate(prev => prev + 1);
           alert("Plant deleted successfully from local storage!");
           return;
         }
@@ -393,7 +439,7 @@ export default function AdminPage() {
         console.log(data.message);
 
         // Refresh plants from backend
-        setForceUpdate(prev => prev + 1);
+        await loadPlants();
         alert("Plant deleted successfully!");
       } catch (error) {
         console.error("Error deleting plant:", error);
@@ -429,6 +475,7 @@ export default function AdminPage() {
   const handleCloseModal = () => {
     setShowAddPlant(false);
     setEditingPlant(null);
+    setIsSubmitting(false); // Reset submission state
   };
 
   // Handle saving plant (routes to correct function)
@@ -950,11 +997,14 @@ export default function AdminPage() {
                                     alt={plant.name}
                                     onError={(e) => {
                                       e.target.style.display = 'none';
-                                      e.target.nextSibling.style.display = 'flex';
+                                      const parent = e.target.parentElement;
+                                      const noImageDiv = document.createElement('div');
+                                      noImageDiv.className = 'admin-no-image';
+                                      noImageDiv.innerHTML = '<svg ...></svg>';
+                                      parent.appendChild(noImageDiv);
                                     }}
                                   />
-                                ) : null}
-                                {!imageUrl && (
+                                ) : (
                                   <div className="admin-no-image">
                                     <Leaf size={20} />
                                   </div>
@@ -1090,6 +1140,7 @@ export default function AdminPage() {
           initialData={editingPlant}
           isEditing={!!editingPlant}
           isLocalStorage={useLocalStorage}
+          isSubmitting={isSubmitting} // Pass submission state to disable button
         />
       )}
     </div>
