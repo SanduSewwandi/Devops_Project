@@ -1,7 +1,6 @@
 version: "3.8"
 
 services:
-
   mongo:
     image: mongo:6
     container_name: mongo
@@ -9,61 +8,52 @@ services:
       - mongo_data:/data/db
     restart: unless-stopped
 
-
   backend:
     image: sandusewwandi/devops_backend:latest
     container_name: backend
     ports:
       - "5000:5000"
-
     environment:
-      JWT_SECRET: dummysecret
-      MONGODB_URI: mongodb://mongo:27017/devops
-      NODE_ENV: production
+      JWT_SECRET: "dummysecret"
+      MONGODB_URI: "mongodb://mongo:27017/devops"
+      NODE_ENV: "production"
+      
+      # Cloudinary Config
+      CLOUDINARY_CLOUD_NAME: "djzjdus1k"
+      CLOUDINARY_API_KEY: "823756362343243"
+      CLOUDINARY_API_SECRET: "FwkT9WUwifSXJn-Mev1-2gpvw5c"
 
-      CLOUDINARY_CLOUD_NAME: djzjdus1k
-      CLOUDINARY_API_KEY: 823756362343243
-      CLOUDINARY_API_SECRET: FwkT9WUwifSXJn-Mev1-2gpvw5c
+      # Admin
+      ADMIN_EMAIL: "admin@plant.com"
+      ADMIN_PASS: "Admin123"
 
-      ADMIN_EMAIL: admin@plant.com
-      ADMIN_PASS: Admin123
+      # CORS
+      CORS_ORIGIN: "http://localhost:5173,http://${PUBLIC_IP}:5173"
+      ALLOWED_ORIGINS: "http://localhost:5173,http://${PUBLIC_IP}:5173"
 
-      CORS_ORIGIN: http://localhost:5173,http://${PUBLIC_IP}:5173
-      ALLOWED_ORIGINS: http://localhost:5173,http://${PUBLIC_IP}:5173
-
+      # Storage (Matches the internal folder we fixed in Jenkins)
+      UPLOAD_PATH: "/app/uploads"
+      FILE_UPLOAD_DEST: "/app/uploads"
       MAX_FILE_SIZE: 15728640
 
-      # ✅ FIXED PATHS (match /app/uploads)
-      UPLOAD_PATH: /app/uploads
-      FILE_UPLOAD_DEST: /app/uploads
-
-      DEBUG: express:*
-      LOG_LEVEL: debug
-
     volumes:
-      # ✅ FIXED (MOST IMPORTANT LINE)
       - uploads_data:/app/uploads
       - ./logs:/app/logs
-
     depends_on:
       - mongo
     restart: unless-stopped
-
 
   frontend:
     image: sandusewwandi/devops_frontend:latest
     container_name: frontend
     ports:
       - "5173:5173"
-
     environment:
-      VITE_API_URL: http://${PUBLIC_IP}:5000
-      VITE_API_BASE_URL: http://${PUBLIC_IP}:5000/api
-
+      VITE_API_URL: "http://${PUBLIC_IP}:5000"
+      VITE_API_BASE_URL: "http://${PUBLIC_IP}:5000/api"
     depends_on:
       - backend
     restart: unless-stopped
-
 
 volumes:
   mongo_data:
