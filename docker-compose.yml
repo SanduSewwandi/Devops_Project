@@ -1,6 +1,7 @@
-version: '3.8'
+version: "3.8"
 
 services:
+
   mongo:
     image: mongo:6
     container_name: mongo
@@ -10,64 +11,56 @@ services:
       - mongo_data:/data/db
     restart: unless-stopped
 
+
   backend:
     image: sandusewwandi/devops_backend:latest
     container_name: backend
+
     ports:
       - "5000:5000"
+
     environment:
-      # Authentication
-      - JWT_SECRET=dummysecret
-      - MONGODB_URI=mongodb://mongo:27017/devops
-      - NODE_ENV=production
-      
-      # Cloudinary - BOTH FORMATS (some backends use CLOUDINARY_, some use CLDN_)
-      - CLOUDINARY_CLOUD_NAME=djzjdus1k
-      - CLOUDINARY_API_KEY=823756362343243
-      - CLOUDINARY_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c
-      - CLDN_NAME=djzjdus1k
-      - CLDN_API_KEY=823756362343243
-      - CLDN_API_SECRET=FwkT9WUwifSXJn-Mev1-2gpvw5c
-      
-      # Admin
-      - ADMIN_EMAIL=admin@plant.com
-      - ADMIN_PASS=Admin123
-      
-      # CORS Configuration - CRITICAL FOR IMAGE UPLOADS
-      - CORS_ORIGIN=http://localhost:5173,http://54.234.237.10:5173
-      - CORS_CREDENTIALS=true
-      
-      # File upload settings - USE /tmp FOR BETTER PERMISSIONS
-      - MAX_FILE_SIZE=10485760  # 10MB
-      - UPLOAD_PATH=/tmp/uploads
-      
-      # Debug mode
-      - DEBUG=true
-      
+      JWT_SECRET: dummysecret
+      MONGODB_URI: mongodb://mongo:27017/devops
+      NODE_ENV: production
+
+      CLOUDINARY_CLOUD_NAME: djzjdus1k
+      CLOUDINARY_API_KEY: 823756362343243
+      CLOUDINARY_API_SECRET: FwkT9WUwifSXJn-Mev1-2gpvw5c
+
+      ADMIN_EMAIL: admin@plant.com
+      ADMIN_PASS: Admin123
+
+      CORS_ORIGIN: http://localhost:5173,http://${PUBLIC_IP}:5173
+      MAX_FILE_SIZE: 10485760
+      UPLOAD_PATH: /tmp/uploads
+
     volumes:
-      # Primary: Use /tmp/uploads for better permissions
-      - /tmp/uploads:/tmp/uploads
-      # Secondary: Keep /app/uploads for compatibility
-      - uploads_volume:/app/uploads
-      # Logs
+      - uploads_data:/tmp/uploads
       - ./logs:/app/logs
-      
+
     depends_on:
       - mongo
+
     restart: unless-stopped
+
 
   frontend:
     image: sandusewwandi/devops_frontend:latest
     container_name: frontend
+
     ports:
       - "5173:5173"
+
     environment:
-      # Frontend API URL
-      - VITE_API_URL=http://54.234.237.10:5000
+      VITE_API_URL: http://${PUBLIC_IP}:5000
+
     depends_on:
       - backend
+
     restart: unless-stopped
+
 
 volumes:
   mongo_data:
-  uploads_volume:
+  uploads_data:
