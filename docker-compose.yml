@@ -32,14 +32,17 @@ services:
       ALLOWED_ORIGINS: http://localhost:5173,http://${PUBLIC_IP}:5173
 
       MAX_FILE_SIZE: 15728640
-      UPLOAD_PATH: /uploads
-      FILE_UPLOAD_DEST: /uploads
+
+      # ✅ FIXED PATHS (match /app/uploads)
+      UPLOAD_PATH: /app/uploads
+      FILE_UPLOAD_DEST: /app/uploads
 
       DEBUG: express:*
       LOG_LEVEL: debug
 
     volumes:
-      - uploads_data:/uploads
+      # ✅ FIXED (MOST IMPORTANT LINE)
+      - uploads_data:/app/uploads
       - ./logs:/app/logs
 
     depends_on:

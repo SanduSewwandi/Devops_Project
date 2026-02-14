@@ -9,13 +9,7 @@ pipeline {
     }
 
     stages {
-
-        stage('Checkout') {
-            steps {
-                checkout scm
-            }
-        }
-
+        stage('Checkout') { steps { checkout scm } }
         stage('Get Public IP') {
             steps {
                 script {
@@ -26,22 +20,10 @@ pipeline {
                 }
             }
         }
-
-        stage('Clean') {
-            steps {
-                sh 'docker-compose down -v --remove-orphans || true'
-            }
-        }
-
+        stage('Clean') { steps { sh 'docker-compose down -v --remove-orphans || true' } }
         stage('Build Images') {
-            steps {
-                sh '''
-                    docker build -t ${BACKEND_IMAGE} ./backEnd
-                    docker build -t ${FRONTEND_IMAGE} ./frontEnd
-                '''
-            }
+            steps { sh "docker build -t ${BACKEND_IMAGE} ./backEnd && docker build -t ${FRONTEND_IMAGE} ./frontEnd" }
         }
-
         stage('Push Images') {
             steps {
                 withCredentials([usernamePassword(
@@ -58,7 +40,6 @@ pipeline {
                 }
             }
         }
-
         stage('Deploy') {
             steps {
                 sh '''
@@ -67,6 +48,42 @@ pipeline {
                     docker-compose ps
                 '''
             }
+        }
+    }
+
+    post {
+        always {
+            echo "=== PIPELINE COMPLETED ==="
+            sh '''
+                echo "Containers status:"
+                docker-compose ps || echo "Could not get container status"
+            '''
+        }
+
+        success {
+            echo "✅ Deployment succeeded!"
+            sh '''
+                echo "Frontend URL: http://${PUBLIC_IP}:5173"
+                echo "Backend URL: http://${PUBLIC_IP}:5000"
+            '''
+        }
+
+        failure {
+            echo "❌ Deployment failed!"
+            sh '''
+                echo "Check backend logs:"
+                docker logs backend --tail=50
+                echo "Check frontend logs:"
+                docker logs frontend --tail=50
+            '''
+        }
+
+        cleanup {
+            echo "Cleaning up temporary files..."
+            sh '''
+                docker exec backend rm -f /uploads/test*.txt 2>/dev/null || true
+                echo "Cleanup done"
+            '''
         }
     }
 }
