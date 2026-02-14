@@ -33,7 +33,7 @@ const Home = () => {
       <section className="hero">
         <div className="hero-content">
           <div className="hero-text">
-            <h1>Green Scape</h1>
+            <h1>Sanduni Sewwandi</h1>
             <p>BRINGING NATURE AND HARMONY TO YOUR LANDSCAPE</p>
            
           </div>
