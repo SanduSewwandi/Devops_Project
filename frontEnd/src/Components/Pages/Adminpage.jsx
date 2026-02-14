@@ -33,7 +33,7 @@ export default function AdminPage() {
   const [searchTerm, setSearchTerm] = useState("")
   const [showAddPlant, setShowAddPlant] = useState(false)
   const [editingPlant, setEditingPlant] = useState(null)
-  const [plants, setPlantsState] = useState([])
+  const [plants, setPlants] = useState([]) // Single source of truth
   const [users, setUsers] = useState([])
   const [loading, setLoading] = useState(false)
   const [forceUpdate, setForceUpdate] = useState(0)
@@ -62,73 +62,11 @@ export default function AdminPage() {
     return imageUrl;
   };
 
-  // Load plants from localStorage on component mount
-  useEffect(() => {
-    const loadPlants = () => {
-      try {
-        const storedPlants = localStorage.getItem('plants')
-        if (storedPlants) {
-          const parsedPlants = JSON.parse(storedPlants)
-          setPlantsState(parsedPlants)
-        } else {
-          const initialPlants = [
-            { 
-              id: 1, 
-              name: "Monstera Deliciosa", 
-              description: "A stunning tropical plant with large, split leaves perfect for brightening any indoor space.",
-              category: "indoor", 
-              price: 45.00, 
-              images: [], 
-              rating: 4.8,
-              stockQuantity: 25,
-              care: {
-                water: "weekly",
-                light: "indirect-light",
-                difficulty: "easy"
-              },
-              popular: true,
-              dateAdded: "2024-01-15"
-            },
-            { 
-              id: 2, 
-              name: "Snake Plant", 
-              description: "Low-maintenance plant that thrives in low light conditions and purifies the air.",
-              category: "indoor", 
-              price: 32.00, 
-              images: [], 
-              rating: 4.6,
-              stockQuantity: 50,
-              care: {
-                water: "bi-weekly",
-                light: "low-light",
-                difficulty: "easy"
-              },
-              popular: true,
-              dateAdded: "2024-02-01"
-            }
-          ]
-          setPlantsState(initialPlants)
-          localStorage.setItem('plants', JSON.stringify(initialPlants))
-        }
-      } catch (error) {
-        console.error('Error loading plants:', error)
-      }
-    }
-
-    loadPlants()
-  }, [])
-
-  // Fetch plants from backend when products section is active
-  useEffect(() => {
-    if (activeSection === "products") {
-      fetchPlants();
-    }
-  }, [activeSection, forceUpdate]);
-
-  // Function to fetch plants from backend
-  const fetchPlants = async () => {
+  // Consolidated plant loading function
+  const loadPlants = async () => {
     setLoading(true);
     try {
+      // Try to fetch from backend first
       const response = await fetch("http://54.234.237.10:5000/api/plant/list", {
         method: "GET",
         headers: {
@@ -136,27 +74,52 @@ export default function AdminPage() {
         },
       });
       
-      if (!response.ok) {
-        throw new Error("Failed to fetch plants");
+      if (response.ok) {
+        const data = await response.json();
+        const plantsData = data.plants || data.data || [];
+        
+        // Update state and localStorage with backend data
+        setPlants(plantsData);
+        localStorage.setItem('plants', JSON.stringify(plantsData));
+        setUseLocalStorage(false);
+      } else {
+        // Fallback to localStorage if backend fails
+        throw new Error("Failed to fetch from backend");
       }
-      
-      const data = await response.json();
-      const plantsData = data.plants || data.data || [];
-      
-      setPlantsState(plantsData);
-      localStorage.setItem('plants', JSON.stringify(plantsData));
     } catch (error) {
-      console.error("Error fetching plants:", error);
-      // Fallback to local storage if API fails
-      setUseLocalStorage(true);
-      const storedPlants = localStorage.getItem('plants');
-      if (storedPlants) {
-        setPlantsState(JSON.parse(storedPlants));
+      console.error("Error fetching plants from backend:", error);
+      
+      // Fallback to localStorage
+      try {
+        const storedPlants = localStorage.getItem('plants');
+        if (storedPlants) {
+          const parsedPlants = JSON.parse(storedPlants);
+          setPlants(parsedPlants);
+        } else {
+          // Initialize with empty array if no plants exist
+          setPlants([]);
+        }
+        setUseLocalStorage(true);
+      } catch (localError) {
+        console.error('Error loading from localStorage:', localError);
+        setPlants([]);
       }
     } finally {
       setLoading(false);
     }
   };
+
+  // Initial load - only once on component mount
+  useEffect(() => {
+    loadPlants();
+  }, []); // Empty dependency array - runs once on mount
+
+  // Refresh plants when forceUpdate changes (after add/edit/delete)
+  useEffect(() => {
+    if (forceUpdate > 0) {
+      loadPlants();
+    }
+  }, [forceUpdate]);
 
   // Fetch users from MongoDB when users section is active
   useEffect(() => {
@@ -193,7 +156,6 @@ export default function AdminPage() {
   // Navigation to add product page
   const handleAddProduct = () => {
     console.log("Add product button clicked");
-    console.log("Current editing plant:", editingPlant);
     setEditingPlant(null);
     setShowAddPlant(true);
   };
@@ -206,8 +168,16 @@ export default function AdminPage() {
       if (useLocalStorage) {
         // Use local storage
         const existingPlants = JSON.parse(localStorage.getItem('plants') || '[]');
-        const updatedPlants = [...existingPlants, plantData];
-        setPlantsState(updatedPlants);
+        
+        // Create a new plant object with a unique ID
+        const newPlant = {
+          ...plantData,
+          id: Date.now(), // Simple unique ID for local storage
+          dateAdded: new Date().toISOString()
+        };
+        
+        const updatedPlants = [...existingPlants, newPlant];
+        setPlants(updatedPlants);
         localStorage.setItem('plants', JSON.stringify(updatedPlants));
         setShowAddPlant(false);
         setForceUpdate(prev => prev + 1);
@@ -228,13 +198,13 @@ export default function AdminPage() {
       formData.append("description", plantData.description);
       formData.append("price", plantData.price);
       formData.append("category", plantData.category);
-      formData.append("rating", plantData.rating);
-      formData.append("stockQuantity", plantData.stockQuantity);
+      formData.append("rating", plantData.rating || 0);
+      formData.append("stockQuantity", plantData.stockQuantity || 0);
       formData.append("popular", plantData.isPopular || plantData.popular || false);
       formData.append("care", JSON.stringify({
-        water: plantData.wateringSchedule || plantData.care?.water,
-        light: plantData.lightRequirements || plantData.care?.light,
-        difficulty: plantData.careDifficulty || plantData.care?.difficulty
+        water: plantData.wateringSchedule || plantData.care?.water || 'weekly',
+        light: plantData.lightRequirements || plantData.care?.light || 'indirect-light',
+        difficulty: plantData.careDifficulty || plantData.care?.difficulty || 'easy'
       }));
 
       // Handle images
@@ -260,12 +230,9 @@ export default function AdminPage() {
         const newPlant = await response.json();
         console.log('Plant added to backend:', newPlant);
         
-        // Update local state with the plant from backend
-        const updatedPlants = [...plants, newPlant.plant || newPlant];
-        setPlantsState(updatedPlants);
-        localStorage.setItem('plants', JSON.stringify(updatedPlants));
-        setShowAddPlant(false);
+        // Refresh plants from backend to ensure consistency
         setForceUpdate(prev => prev + 1);
+        setShowAddPlant(false);
         alert('Plant added successfully!');
         return;
       } else {
@@ -316,7 +283,7 @@ export default function AdminPage() {
             : plant
         );
         
-        setPlantsState(updatedPlants);
+        setPlants(updatedPlants);
         localStorage.setItem('plants', JSON.stringify(updatedPlants));
         setShowAddPlant(false);
         setEditingPlant(null);
@@ -338,13 +305,13 @@ export default function AdminPage() {
       formData.append("description", plantData.description);
       formData.append("price", plantData.price);
       formData.append("category", plantData.category);
-      formData.append("rating", plantData.rating);
-      formData.append("stockQuantity", plantData.stockQuantity);
+      formData.append("rating", plantData.rating || 0);
+      formData.append("stockQuantity", plantData.stockQuantity || 0);
       formData.append("popular", plantData.isPopular || plantData.popular || false);
       formData.append("care", JSON.stringify({
-        water: plantData.wateringSchedule || plantData.care?.water,
-        light: plantData.lightRequirements || plantData.care?.light,
-        difficulty: plantData.careDifficulty || plantData.care?.difficulty
+        water: plantData.wateringSchedule || plantData.care?.water || 'weekly',
+        light: plantData.lightRequirements || plantData.care?.light || 'indirect-light',
+        difficulty: plantData.careDifficulty || plantData.care?.difficulty || 'easy'
       }));
 
       // Handle images
@@ -370,17 +337,10 @@ export default function AdminPage() {
         const updatedPlant = await response.json();
         console.log("Plant updated on server:", updatedPlant);
         
-        const updatedPlants = plants.map(plant =>
-          plant._id === editingPlant._id 
-            ? { ...updatedPlant.plant || updatedPlant } 
-            : plant
-        );
-        
-        setPlantsState(updatedPlants);
-        localStorage.setItem('plants', JSON.stringify(updatedPlants));
+        // Refresh plants from backend
+        setForceUpdate(prev => prev + 1);
         setShowAddPlant(false);
         setEditingPlant(null);
-        setForceUpdate(prev => prev + 1);
         alert('Plant updated successfully!');
         return;
       } else {
@@ -403,7 +363,7 @@ export default function AdminPage() {
         if (useLocalStorage) {
           // Delete from local storage
           const updatedPlants = plants.filter((plant) => (plant._id || plant.id) !== plantId);
-          setPlantsState(updatedPlants);
+          setPlants(updatedPlants);
           localStorage.setItem("plants", JSON.stringify(updatedPlants));
           setForceUpdate(prev => prev + 1);
           alert("Plant deleted successfully from local storage!");
@@ -432,11 +392,8 @@ export default function AdminPage() {
         const data = await response.json();
         console.log(data.message);
 
-        const updatedPlants = plants.filter((plant) => (plant._id || plant.id) !== plantId);
-        setPlantsState(updatedPlants);
-        localStorage.setItem("plants", JSON.stringify(updatedPlants));
+        // Refresh plants from backend
         setForceUpdate(prev => prev + 1);
-
         alert("Plant deleted successfully!");
       } catch (error) {
         console.error("Error deleting plant:", error);
@@ -922,7 +879,7 @@ export default function AdminPage() {
                   <button className="admin-add-button" onClick={handleAddProduct}>
                     <Plus size={18} /> Add New Plant
                   </button>
-                  <button className="admin-add-button" onClick={fetchPlants}>
+                  <button className="admin-add-button" onClick={() => setForceUpdate(prev => prev + 1)}>
                     <RefreshCw size={18} /> Refresh
                   </button>
                 </div>
@@ -996,13 +953,9 @@ export default function AdminPage() {
                                       e.target.nextSibling.style.display = 'flex';
                                     }}
                                   />
-                                ) : (
+                                ) : null}
+                                {!imageUrl && (
                                   <div className="admin-no-image">
-                                    <Leaf size={20} />
-                                  </div>
-                                )}
-                                {imageUrl && (
-                                  <div className="admin-no-image" style={{ display: 'none' }}>
                                     <Leaf size={20} />
                                   </div>
                                 )}
