@@ -142,7 +142,7 @@ function Navbar() {
           to="/"
           className={isActiveLink("/") ? "active" : ""}
         >
-          Sanduni
+          Home
         </Link>
         <Link
           to="/shop"
